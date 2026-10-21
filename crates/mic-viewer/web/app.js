@@ -237,7 +237,7 @@
       b.title = dark ? 'Light theme' : 'Dark theme';
       b.textContent = '';
       b.appendChild(icon(dark ? 'sun' : 'moon'));
-      if (map) map.setBackground(cssVar('--map-bg') || '#05070b');
+      if (map) { map.setBackground(cssVar('--map-bg') || '#05070b'); placeOverlays(); }
       if (timeline) timeline.redraw();
     }
     $('btn-theme').addEventListener('click', () => {
@@ -842,7 +842,10 @@
       if (!map) return;
       const covered = !cardBox.hidden && !phoneMQ.matches;
       $('stage').classList.toggle('card-open', covered);
-      map.setScaleBar({ right: covered ? cardBox.offsetWidth + 26 : 14, bottom: 14 });
+      map.setScaleBar({
+        right: covered ? cardBox.offsetWidth + 26 : 14, bottom: 14,
+        ink: cssVar('--scale-ink') || '#ffffff', halo: cssVar('--scale-halo') || 'rgba(0,0,0,.55)',
+      });
     }
 
     function setSide(on, quiet) {

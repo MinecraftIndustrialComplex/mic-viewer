@@ -318,7 +318,9 @@
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
       const label = (n >= 1 ? fmtInt(n) : String(n)) + (n === 1 ? ' block' : ' blocks');
-      for (const [colour, width, off] of [['rgba(0,0,0,.55)', 4, 0.5], ['#ffffff', 2, 0]]) {
+      // White on a dark halo by default; a light page passes dark ink on a light halo.
+      const ink = scaleBar.ink || '#ffffff', halo = scaleBar.halo || 'rgba(0,0,0,.55)';
+      for (const [colour, width, off] of [[halo, 4, 0.5], [ink, 2, 0]]) {
         ctx.strokeStyle = colour;
         ctx.lineWidth = width;
         ctx.beginPath();
@@ -329,9 +331,10 @@
         ctx.stroke();
       }
       ctx.lineWidth = 3;
-      ctx.strokeStyle = 'rgba(0,0,0,.6)';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = halo;
       ctx.strokeText(label, x1, y - 5);
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = ink;
       ctx.fillText(label, x1, y - 5);
       ctx.restore();
     }

@@ -28,6 +28,8 @@
   --past-bg: rgba(242, 165, 65, 0.13);
   --past-line: rgba(242, 165, 65, 0.42);
   --map-bg: #05070b;
+  --scale-ink: #ffffff;
+  --scale-halo: rgba(0, 0, 0, 0.55);
   --chart-bg: #0a0d12;
   --glass: rgba(14, 18, 24, 0.86);
   --glass-strong: rgba(18, 23, 31, 0.96);
@@ -58,6 +60,8 @@
     --past-bg: rgba(214, 120, 0, 0.10);
     --past-line: rgba(214, 120, 0, 0.40);
     --map-bg: #d7dce3;
+    --scale-ink: #10151c;
+    --scale-halo: rgba(255, 255, 255, 0.8);
     --chart-bg: #f6f7f9;
     --glass: rgba(255, 255, 255, 0.88);
     --glass-strong: rgba(255, 255, 255, 0.97);
@@ -88,6 +92,8 @@
   --past-bg: rgba(214, 120, 0, 0.10);
   --past-line: rgba(214, 120, 0, 0.40);
   --map-bg: #d7dce3;
+  --scale-ink: #10151c;
+  --scale-halo: rgba(255, 255, 255, 0.8);
   --chart-bg: #f6f7f9;
   --glass: rgba(255, 255, 255, 0.88);
   --glass-strong: rgba(255, 255, 255, 0.97);
