@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use mic_viewer::api::{
-    Card, EventKind, EventRow, EventsAnswer, Frame, Freshness, Group, Histogram, LayerDesc, Layers, LegRow, Mark,
-    ProjectionDesc, PyramidDesc, Section, Series, TICKS_PER_DAY, Tick, TileLayerDesc, TimeInfo, WorldInfo,
+    Card, EventKind, EventRow, EventsAnswer, Found, Frame, Freshness, Group, Histogram, LayerDesc, Layers, LegRow,
+    Mark, ProjectionDesc, PyramidDesc, Section, Series, TICKS_PER_DAY, Tick, TileLayerDesc, TimeInfo, WorldInfo,
 };
 use mic_viewer::scene::{Scene, SceneWriter};
 use mic_viewer::tiles::{Rendered, TILE, TileCache, TileError, TileSource, Tiles};
@@ -1133,8 +1133,53 @@ impl Backend for Demo {
                 .collect(),
             has_events: true,
             stream: true,
-            find: false,
+            find: true,
         }
+    }
+
+    fn find(&self, q: &str, limit: usize) -> Vec<Found> {
+        let q = q.to_lowercase();
+        let rank = |name: &str| {
+            let n = name.to_lowercase();
+            if n.starts_with(&q) {
+                Some(0)
+            } else if n.contains(&q) {
+                Some(1)
+            } else {
+                None
+            }
+        };
+        let mut out: Vec<(u8, Found)> = Vec::new();
+        for v in &self.world.villages {
+            if let Some(r) = rank(&v.name) {
+                let f = Found {
+                    layer: "settle.villages".into(),
+                    id: v.id.to_string(),
+                    label: v.name.clone(),
+                    kind: "Village".into(),
+                    frame: OVERWORLD.into(),
+                    x: v.x,
+                    z: v.z,
+                };
+                out.push((r, f));
+            }
+        }
+        for d in &self.world.districts {
+            if let Some(r) = rank(&d.name) {
+                let f = Found {
+                    layer: "industry.districts".into(),
+                    id: d.id.to_string(),
+                    label: d.name.clone(),
+                    kind: "District".into(),
+                    frame: OVERWORLD.into(),
+                    x: (d.b[0] + d.b[2]) / 2.0,
+                    z: (d.b[1] + d.b[3]) / 2.0,
+                };
+                out.push((r, f));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.label.cmp(&b.1.label)));
+        out.into_iter().take(limit).map(|(_, f)| f).collect()
     }
 
     fn layers(&self) -> Arc<Layers> {
