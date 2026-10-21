@@ -109,6 +109,8 @@ fn only_gets_and_the_page_carries_its_policy() {
     assert_eq!(st, 200);
     assert!(head.contains("Content-Security-Policy: default-src 'self'"), "{head}");
     assert!(head.contains("X-Content-Type-Options: nosniff"));
+    // Not no-referrer: that makes a browser send `Origin: null` on same-origin POSTs.
+    assert!(head.contains("Referrer-Policy: same-origin"), "{head}");
     assert!(!head.to_ascii_lowercase().contains("access-control-allow"), "no CORS");
     let (st, head, _) = ask(addr, "HEAD", "/api/world", "localhost");
     assert_eq!(st, 200);

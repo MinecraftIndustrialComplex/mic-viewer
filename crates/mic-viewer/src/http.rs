@@ -498,10 +498,12 @@ fn reason(status: u16) -> &'static str {
     }
 }
 
+/// `Referrer-Policy: same-origin`, not `no-referrer`: under `no-referrer` a browser sends
+/// `Origin: null` on the page's own POSTs, and [`post_refusal`] would refuse every one of them.
 fn respond<W: Write>(out: &mut W, r: &Response, head: bool, keep_alive: bool) -> io::Result<()> {
     let mut msg = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nCache-Control: {}\r\n\
-         X-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n",
+         X-Content-Type-Options: nosniff\r\nReferrer-Policy: same-origin\r\n",
         r.status,
         reason(r.status),
         r.content_type,
