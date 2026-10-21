@@ -8,7 +8,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
 
-use mic_viewer::api::{Card, Frame, LayerDesc, Layers, Mark, MarksAnswer, Tick, WorldInfo};
+use mic_viewer::api::{Card, Found, Frame, LayerDesc, Layers, Mark, MarksAnswer, Tick, WorldInfo};
 use mic_viewer::http::{Config, Server};
 use mic_viewer::scene::{Scene, SceneWriter};
 use mic_viewer::viewer::{App, Backend, Changes};
@@ -16,6 +16,8 @@ use mic_viewer::viewer::{App, Backend, Changes};
 struct Tiny {
     scene: std::sync::RwLock<Arc<Scene>>,
     changes: Changes,
+    /// The views `look` was told of.
+    looked: std::sync::Mutex<Vec<(String, [f64; 4], f64)>>,
 }
 
 fn tiny_scene(n: usize, t: Tick) -> Scene {
@@ -56,11 +58,29 @@ impl Backend for Tiny {
     fn changes(&self) -> Option<&Changes> {
         Some(&self.changes)
     }
+    fn look(&self, frame: &str, area: [f64; 4], bpp: f64) {
+        self.looked.lock().unwrap().push((frame.to_owned(), area, bpp));
+    }
+    fn find(&self, q: &str, limit: usize) -> Vec<Found> {
+        let solo = Found {
+            layer: "one".into(),
+            id: "solo".into(),
+            label: "Solo".into(),
+            kind: "One".into(),
+            frame: "f".into(),
+            x: 5.0,
+            z: 5.0,
+        };
+        if "solo".contains(&q.to_lowercase()) { vec![solo; limit.min(3)] } else { Vec::new() }
+    }
 }
 
 fn start() -> (Server, Arc<Tiny>) {
-    let tiny =
-        Arc::new(Tiny { scene: std::sync::RwLock::new(Arc::new(tiny_scene(100_000, 10))), changes: Changes::new() });
+    let tiny = Arc::new(Tiny {
+        scene: std::sync::RwLock::new(Arc::new(tiny_scene(100_000, 10))),
+        changes: Changes::new(),
+        looked: Default::default(),
+    });
     let app = Arc::new(App::new(Arc::clone(&tiny)));
     let server = Server::start("127.0.0.1:0".parse().unwrap(), Config::default(), app).unwrap();
     (server, tiny)
@@ -125,6 +145,7 @@ fn a_public_address_is_refused_at_start() {
     let app = Arc::new(App::new(Arc::new(Tiny {
         scene: std::sync::RwLock::new(Arc::new(tiny_scene(1, 0))),
         changes: Changes::new(),
+        looked: Default::default(),
     })));
     for bind in ["0.0.0.0:0", "[::]:0", "192.168.1.2:0", "100.100.1.1:0"] {
         let err = Server::start(bind.parse().unwrap(), Config::default(), app.clone()).err().expect(bind);
@@ -325,4 +346,33 @@ fn a_unix_socket_is_its_owners_and_is_never_taken_over() {
     let mut again = Server::start_unix(&path, Config::default(), app()).unwrap();
     again.stop();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn find_answers_names_and_marks_for_now_say_where_the_page_looks() {
+    let (mut server, tiny) = start();
+    let addr = server.addr().unwrap();
+    let (st, _, body) = ask(addr, "GET", "/api/find?q=SOL&limit=2", "localhost");
+    assert_eq!(st, 200);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["q"], "SOL");
+    let found = v["found"].as_array().unwrap();
+    assert_eq!(found.len(), 2, "limit kept");
+    assert_eq!(found[0]["layer"], "one");
+    assert_eq!(found[0]["id"], "solo");
+    assert_eq!(found[0]["frame"], "f");
+    // Blank finds nothing without asking the backend; a missing q is blank.
+    for path in ["/api/find?q=%20%20", "/api/find"] {
+        let (st, _, body) = ask(addr, "GET", path, "localhost");
+        assert_eq!(st, 200);
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(v["found"].as_array().unwrap().is_empty(), "{path}");
+    }
+    // Marks for now tell the backend the view; marks for a past time do not.
+    let base = "/api/marks?frame=f&x0=10&z0=-4&x1=-2&z1=8&bpp=0.5&layers=one";
+    assert_eq!(ask(addr, "GET", base, "localhost").0, 200);
+    assert_eq!(ask(addr, "GET", &format!("{base}&t=5"), "localhost").0, 200);
+    let looked = tiny.looked.lock().unwrap().clone();
+    assert_eq!(looked, vec![("f".to_owned(), [-2.0, -4.0, 10.0, 8.0], 0.5)]);
+    server.stop();
 }

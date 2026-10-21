@@ -6,7 +6,11 @@ design is mic-rtsim's VIEWER.md; this file is what the code implements. Every ro
 methods answer 405) and nothing a page sends changes a simulation.
 
 Units: positions are **blocks** (x east, z south, as Minecraft). Time is a **game tick** (`t`, an
-integer; 24,000 ticks a game day). Colours are CSS hex strings.
+integer; 24,000 ticks a game day). Colours are CSS hex strings, or one of the page theme's tokens:
+`ink` (the map's text and structure: near black on the light theme, warm off-white on the dark),
+`ink2` (secondary ink), `paper` (the map's ground), `bad` (red), `warn` (amber), `off` (grey). Use
+`ink` for things that should read as structure rather than as a category (stations, trains,
+machines); a token works anywhere a colour does (style, legend, mark).
 
 ## 1. Routes
 
@@ -20,6 +24,7 @@ integer; 24,000 ticks a game day). Colours are CSS hex strings.
 | `/api/thing/<layer>/<id>?t` | §5 |
 | `/api/events?frame&from&to&x0&z0&x1&z1&kinds&limit` | §6 |
 | `/api/events/histogram?frame&from&to&buckets&kinds` | §6 |
+| `/api/find?q&limit` | §5.1 |
 | `/api/stream` | §7, server-sent events |
 | `/tiles/<layer>/<z>/<x>/<y>.png` | base map tiles (§2.2); `<layer>` is a tile layer's `id`, indices signed |
 
@@ -50,9 +55,12 @@ Query numbers are decimal; `layers` and `kinds` are comma-separated ids. A missi
   "budget": 2000,
   "event_kinds": [ { "id": "conflict.raid", "label": "Raid", "group": "conflict", "color": "#e5484d", "severity": 2 } ],
   "has_events": true,
-  "stream": true
+  "stream": true,
+  "find": true
 }
 ```
+
+- `find`: whether `/api/find` answers; the page shows its search box only then.
 
 - `source`: `save`, `live`, `host` or `demo`. The page shows it as a badge.
 - `frames`: one per dimension. `projection.kind` is `flat` (no wrap), `xwrap` (east and west wrap
@@ -112,7 +120,7 @@ A tile request outside `bounds` is never made. A tile with nothing in it answers
       "description": "Villages and player bases, sized by population",
       "kinds": ["point"], "priority": 10, "default_on": true,
       "min_bpp": 0, "max_bpp": 1e9,
-      "style": { "color": "#e0b04a", "glyph": "circle", "size": 6, "width": 2 },
+      "style": { "color": "#e0b04a", "glyph": "circle", "size": 6, "width": 2, "line": null, "label_bpp": 8 },
       "legend": [ { "label": "Human", "color": "#e0b04a", "glyph": "circle" } ],
       "has_cards": true, "has_past": false, "animated": false
     }
@@ -122,8 +130,20 @@ A tile request outside `bounds` is never made. A tile with nothing in it answers
 
 - `min_bpp`, `max_bpp`: the zoom range (blocks per CSS pixel) where the layer is asked for. Outside
   it the layer is greyed in the panel and not requested.
-- `glyph`: `circle`, `square`, `diamond`, `triangle`, `ring`, `cross`, `star`.
-- `legend` entries are addressed by index from marks (`ci`).
+- `glyph`: `circle`, `square`, `diamond`, `triangle`, `ring`, `cross`, `star`, `dot`; turned by a
+  point's `a`: `station` (a capsule along the track), `signal` (a bar across it with a lamp in the
+  colour); `gauge` (a dial), `port` (a parcel); `train` in legend entries (a small train).
+- `line` (style, optional): how the layer's paths are drawn unless a mark names its own (`st`):
+  `rail` (a cased line; two rails on sleepers below 0.25 blocks a pixel), `chain` (short dashes,
+  pulleys at the ends close in, `n` dots along it), `belt` (a band as wide as a block, chevrons the
+  way it runs when `arrow`), `flow` (a soft band under other lines, width by `w`), `dash`, `dot`;
+  none: a cased solid line.
+- `label_bpp` (style, optional): point, path and train labels (`l`) are drawn on the map at this
+  zoom and closer, kept apart by priority; otherwise they show only on hover. Area labels are drawn
+  whenever the area is big enough on screen.
+- `legend` entries are addressed by index from marks (`ci`). An entry may carry `glyph`, `line`
+  (drawn as that line style) and `st` (drawn in that state). The page's key lists the entries whose
+  marks are on screen, and an entry whose `glyph` is `dot` when a path in view has `n`.
 - `priority`: higher draws on top and gets its share of the budget first.
 
 ## 4. `/api/marks`
@@ -146,17 +166,29 @@ in this save"`); the page shows it under the layer's name. Marks (short keys kee
 
 | `k` | Fields | Drawn as |
 |---|---|---|
-| `point` | `id`, `x`, `z`, `ci?`, `c?`, `g?`, `s?`, `l?` (label), `ring?` | a glyph |
+| `point` | `id`, `x`, `z`, `ci?`, `c?`, `g?`, `s?`, `l?` (label), `ring?`, `a?` (heading), `st?` | a glyph |
 | `leg` | `id`, `p: [[x0,z0,x1,z1], ...]` pieces, `t0`, `t1`, `ci?`, `c?`, `g?`, `l?` | a mover at its place on the leg at time t, its track faint |
-| `path` | `id?`, `p: [[x,z], ...]`, `ci?`, `c?`, `w?` | a polyline |
+| `path` | `id?`, `p: [[x,z], ...]`, `ci?`, `c?`, `w?`, `st?` (line style), `l?`, `arrow?`, `n?` | a polyline in its line style |
 | `edge` | `id?`, `a: [x,z]`, `b: [x,z]`, `w?` (CSS px), `ci?`, `c?` | a line |
-| `area` | `id?`, `x`, `z`, `r` or `box: [x0,z0,x1,z1]`, `ci?`, `c?`, `l?` | a translucent disc or box |
+| `area` | `id?`, `x`, `z`, `r` or `box: [x0,z0,x1,z1]`, `rings?`, `ci?`, `c?`, `l?`, `st?` | an outline (of `rings` when given), faintly filled, its name in italics |
+| `train` | `id`, `cars: [[x0,z0,x1,z1], ...]`, `ci?`, `c?`, `l?`, `st?` | a box per carriage, the leading one pointed; a chevron far out |
 | `cell` | `x0`, `z0`, `size`, `w`, `h`, `v: [...]` (row-major, null for none), `ramp?`, `lo?`, `hi?` | a grid of coloured squares |
 | `cluster` | `x`, `z`, `n`, `by?: {"<legend index>": n}` | a bubble with the count |
 | `label` | `x`, `z`, `text` | text |
 
 - `ci` is an index into the layer's `legend`; `c` an explicit colour; neither: the layer's style.
 - `s` multiplies the style's size (population, head count).
+- `a` (point): a heading in radians, 0 east, clockwise as z runs south, for turned glyphs.
+- `st` (point, train): `off` (hollow, or grey for a train: stopped, idle), `bad` (a red ring, or a
+  red train: broken, overstressed, derailed), `warn` (an amber ring). On an area: the outline,
+  `dash` (learning), `dot` (suspended, grey), `bad` (red); none: solid. On a path: the line style.
+- `rings` (area): closed outlines `[[[x,z], ...], ...]`, filled even-odd (holes work): a district's
+  chunks, never a bounding box. Set `box` too (their bounds) for pages older than rings.
+- `cars` (train): each carriage from its front bogey to its back one, the leading carriage first, so
+  the train runs towards `cars[0]`'s `x0, z0`.
+- `arrow` (path): arrows along it the way `p` runs. `n`: things on it (packages on a chain), drawn
+  spread along it.
+- Paths are thinned to the asked zoom on the server (Douglas-Peucker at a quarter of a pixel).
 - Leg pieces are already cut at seams; the page never joins pieces. Between `t0` and `t1` the mover
   is at the matching fraction of the pieces' total length; before `t0` at the start, after `t1` at
   the end.
@@ -178,6 +210,22 @@ in this save"`); the page shows it under the layer's name. Marks (short keys kee
 
 404 when the thing is gone. `value` is a string or a number (the page formats numbers). `as_of`
 (a tick) and `note` say when a card is older than now ("as of game day 4").
+
+### 5.1 `/api/find?q&limit`
+
+```json
+{ "q": "center", "found": [ { "layer": "rail.stations", "id": "a1b2...", "label": "Center 5",
+  "kind": "Station", "frame": "minecraft:overworld", "x": -138.0, "z": -116.0 } ] }
+```
+
+Named things whose names hold `q`, best first, at most `limit` (20, at most 100). The page's
+search box flies to one and opens its card. An empty `q` finds nothing.
+
+### 5.2 What the page looks at
+
+Every `/api/marks` call for now (no `t`) also tells the backend the view it is for (`Backend::look(frame, area,
+bpp)`), so a backend can read what is in view on demand (block entities of the chunks there) and
+publish them with a new layer `version` when they land. `look` must return at once.
 
 ## 6. Events
 
