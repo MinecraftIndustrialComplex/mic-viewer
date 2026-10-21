@@ -11,6 +11,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hasher;
 use std::io::Write;
+use std::sync::Arc;
 
 use crate::api::{Mark, Tick};
 
@@ -26,13 +27,19 @@ pub fn region_of(x: f64, z: f64) -> RegionKey {
     ((x / REGION).floor() as i32, (z / REGION).floor() as i32)
 }
 
-/// One layer's marks in one frame.
+/// One layer's marks in one frame. Cloning one is cheap (the marks and their index are shared), so
+/// a backend can compose a new scene from an old one's layers and a few new ones.
 #[derive(Clone, Debug, Default)]
 pub struct LayerRows {
     /// Changes when the marks change (a hash of them), so the page refetches only what moved.
     pub version: u64,
     /// Why the layer has no marks, when it has none (`/api/marks` passes it on as `empty`).
     pub empty: Option<String>,
+    rows: Arc<Rows>,
+}
+
+#[derive(Debug, Default)]
+struct Rows {
     marks: Vec<Mark>,
     /// Region -> indices of the marks whose box touches it.
     by_region: HashMap<RegionKey, Vec<u32>>,
@@ -44,7 +51,8 @@ pub struct LayerRows {
 
 impl LayerRows {
     pub fn from_marks(marks: Vec<Mark>) -> LayerRows {
-        let mut rows = LayerRows { version: version_of(&marks), ..LayerRows::default() };
+        let version = version_of(&marks);
+        let mut rows = Rows::default();
         for (i, m) in marks.iter().enumerate() {
             let i = i as u32;
             let b = m.bbox();
@@ -63,7 +71,7 @@ impl LayerRows {
             *rows.counts.entry(region_of(a[0], a[1])).or_default() += 1;
         }
         rows.marks = marks;
-        rows
+        LayerRows { version, empty: None, rows: Arc::new(rows) }
     }
 
     /// No marks, and why: a module the world does not run, a part that failed to read.
@@ -77,20 +85,20 @@ impl LayerRows {
     }
 
     pub fn len(&self) -> usize {
-        self.marks.len()
+        self.rows.marks.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.marks.is_empty()
+        self.rows.marks.is_empty()
     }
 
     pub fn marks(&self) -> &[Mark] {
-        &self.marks
+        &self.rows.marks
     }
 
     /// Marks anchored per region.
     pub fn region_counts(&self) -> &HashMap<RegionKey, u32> {
-        &self.counts
+        &self.rows.counts
     }
 
     /// The marks whose box meets `b` (`[x0, z0, x1, z1]`) or one of its copies a `period` east or
@@ -108,16 +116,17 @@ impl LayerRows {
             let mb = m.bbox();
             boxes.iter().any(|q| mb[0] <= q[2] && mb[2] >= q[0] && mb[1] <= q[3] && mb[3] >= q[1])
         };
-        if regions as usize >= self.marks.len() / 4 || regions > 1 << 16 {
+        let rows = &*self.rows;
+        if regions as usize >= rows.marks.len() / 4 || regions > 1 << 16 {
             // Cheaper to look at every mark than at every region.
-            return self.marks.iter().filter(|m| hit(m)).collect();
+            return rows.marks.iter().filter(|m| hit(m)).collect();
         }
-        let mut idx: Vec<u32> = self.wide.clone();
+        let mut idx: Vec<u32> = rows.wide.clone();
         for q in &boxes {
             let (r0, r1) = (region_of(q[0], q[1]), region_of(q[2], q[3]));
             for rx in r0.0..=r1.0 {
                 for rz in r0.1..=r1.1 {
-                    if let Some(v) = self.by_region.get(&(rx, rz)) {
+                    if let Some(v) = rows.by_region.get(&(rx, rz)) {
                         idx.extend_from_slice(v);
                     }
                 }
@@ -125,7 +134,7 @@ impl LayerRows {
         }
         idx.sort_unstable();
         idx.dedup();
-        idx.into_iter().map(|i| &self.marks[i as usize]).filter(|m| hit(m)).collect()
+        idx.into_iter().map(|i| &rows.marks[i as usize]).filter(|m| hit(m)).collect()
     }
 }
 

@@ -1290,6 +1290,18 @@
       ctx.setLineDash([]);
       return;
     }
+    if (!glyph && kind === 'label') {
+      ctx.font = `600 11px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = th.halo;
+      ctx.strokeText('Aa', w / 2, cy + 0.5);
+      ctx.fillStyle = th.ink;
+      ctx.fillText('Aa', w / 2, cy + 0.5);
+      return;
+    }
     if (!glyph && kind === 'cell') {
       const n = 4, s = Math.min((w - 4) / n, h - 4);
       for (let i = 0; i < n; i++) {

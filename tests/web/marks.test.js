@@ -225,11 +225,15 @@ test('drawSwatch draws every legend entry and layer without throwing', () => {
     { kinds: ['point'], style: { color: 'ink', glyph: 'station' }, legend: [{ label: 's', color: 'ink', glyph: 'station', st: 'warn' }, { label: 'g', color: '#2da44e', glyph: 'gauge' }, { label: 'p', color: '#b7791f', glyph: 'port' }, { label: 'x', color: 'ink', glyph: 'circle', st: 'off' }, { label: 'sig', color: '#d1242f', glyph: 'signal' }] },
     { kinds: ['area'], style: { color: '#2a7f7a' }, legend: [{ label: 'a', color: '#2a7f7a', st: 'dot' }] },
     { kinds: ['cell'], style: { color: '#888' } },
+    { kinds: ['label'], style: { color: '#888' } },
   ];
   for (const d of descs) {
     MV.drawSwatch(recordingCtx(), d, null, 22, 14, { dark: true });
     (d.legend || []).forEach((_, i) => MV.drawSwatch(recordingCtx(), d, i, 22, 14, null));
   }
+  const names = recordingCtx();
+  MV.drawSwatch(names, { kinds: ['label'], style: {} }, null, 22, 14, null);
+  assert.deepEqual(names.texts, ['Aa']);
 });
 
 test('fmtNum: thousands, decimals by size, exponents at the extremes', () => {
