@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-// Marks and cards: legAt against Rust's leg_at cases, colours and glyphs, ramps, hit testing,
-// number formatting and sparklines.
+// Marks and cards: legAt against Rust's leg_at cases, colours, theme tokens and glyphs, ramps, hit
+// testing (trains and outlines too), line geometry, a draw on a recording canvas (what the key is
+// told was drawn), swatches, number formatting and sparklines.
 //
 //     nix develop -c node --test 'tests/web/*.test.js'
 'use strict';
@@ -40,6 +41,9 @@ test('parseColor, rgba, lighten', () => {
   assert.deepEqual(MV.parseColor('#112233'), [17, 34, 51]);
   assert.deepEqual(MV.parseColor('#112233ff'), [17, 34, 51]);
   assert.deepEqual(MV.parseColor('red'), [136, 136, 136]);
+  assert.deepEqual(MV.parseColor('rgba(14, 16, 19, 0.9)'), [14, 16, 19]);
+  assert.deepEqual(MV.parseColor('rgb(1,2,3)'), [1, 2, 3]);
+  assert.equal(MV.mix('#000000', '#ffffff', 0.5), 'rgb(128, 128, 128)');
   assert.equal(MV.rgba('#ff0000', 0.5), 'rgba(255, 0, 0, 0.5)');
   assert.equal(MV.lighten('#000000', 0.5), 'rgb(128, 128, 128)');
 });
@@ -55,6 +59,23 @@ test('colour and glyph: the mark, else its legend entry, else the layer style', 
   assert.equal(MV.glyphOf({ ci: 0 }, desc), 'star');
   assert.equal(MV.glyphOf({ ci: 1 }, desc), 'diamond');
   assert.equal(MV.glyphOf({}, null), 'circle');
+});
+
+test('theme tokens resolve against the page theme, light by default', () => {
+  assert.equal(MV.resolve('ink', null), '#1f2328');
+  assert.equal(MV.resolve('paper', { dark: true }), '#14171b');
+  assert.equal(MV.resolve('ink', { dark: true, ink: '#eeeeee' }), '#eeeeee');
+  assert.equal(MV.resolve('#123456', { dark: true }), '#123456');
+  const th = { dark: false, ink: '#000001' };
+  assert.equal(MV.themeOf(th), MV.themeOf(th));            // cached per theme object
+  assert.equal(MV.themeOf(th).halo, MV.THEMES.light.halo); // filled in from the defaults
+});
+
+test('line style: the mark, else the layer', () => {
+  const desc = { style: { line: 'rail' } };
+  assert.equal(MV.lineOf({}, desc), 'rail');
+  assert.equal(MV.lineOf({ st: 'flow' }, desc), 'flow');
+  assert.equal(MV.lineOf({}, { style: {} }), null);
 });
 
 test('rampColor runs along the stops', () => {
@@ -83,6 +104,8 @@ test('xExtent spans what a mark covers east to west', () => {
   assert.deepEqual(MV.xExtent({ k: 'area', x: 10, z: 0, r: 5 }), [5, 15]);
   assert.deepEqual(MV.xExtent({ k: 'area', box: [1, 2, 3, 4] }), [1, 3]);
   assert.deepEqual(MV.xExtent({ k: 'cell', x0: 100, size: 16, w: 4 }), [100, 164]);
+  assert.deepEqual(MV.xExtent({ k: 'train', cars: [[10, 0, 4, 0], [3, 0, -6, 1]] }), [-6, 10]);
+  assert.deepEqual(MV.xExtent({ k: 'area', rings: [[[0, 0], [16, 0], [16, 16], [0, 16]]] }), [0, 16]);
 });
 
 test('distToSegment', () => {
@@ -115,6 +138,98 @@ test('pick: glyphs on top, then the nearest line, then the smallest area, then c
   const cell = MV.pick(targets, 305, 15);
   assert.equal(cell.id, 'heat');
   assert.equal(cell.value, 3);
+});
+
+test('pick: a train over the track it stands on, an outline by its inside', () => {
+  const targets = [
+    { kind: 'poly', pts: [0, 50, 200, 50], w: 3, id: 'track' },
+    { kind: 'train', pts: [80, 50, 60, 50, 58, 50, 40, 50], w: 6, id: 'train' },
+    // An L of two chunks with a hole-free outline, and a square inside a bigger one (even-odd).
+    { kind: 'rings', rings: [[300, 0, 340, 0, 340, 20, 320, 20, 320, 40, 300, 40]], x0: 300, y0: 0, x1: 340, y1: 40, area: 1200, id: 'L' },
+  ];
+  const id = (x, y) => { const t = MV.pick(targets, x, y); return t && t.id; };
+  assert.equal(id(70, 51), 'train');
+  assert.equal(id(150, 51), 'track');
+  assert.equal(id(335, 10), 'L');
+  assert.equal(id(335, 35), null);        // in the bounds, outside the L
+  assert.ok(MV.inRings(5, 5, [[0, 0, 10, 0, 10, 10, 0, 10]]));
+  assert.ok(!MV.inRings(5, 5, [[0, 0, 10, 0, 10, 10, 0, 10], [2, 2, 8, 2, 8, 8, 2, 8]]));
+});
+
+test('walk, offsetFlat and flatLength follow a polyline', () => {
+  const f = [0, 0, 10, 0, 10, 10];
+  assert.equal(MV.flatLength(f), 20);
+  const at = [];
+  MV.walk(f, 5, 2.5, (x, y, ux, uy) => at.push([x, y, ux, uy]));
+  assert.deepEqual(at, [[2.5, 0, 1, 0], [7.5, 0, 1, 0], [10, 2.5, 0, 1], [10, 7.5, 0, 1]]);
+  const capped = [];
+  MV.walk(f, 1, 0, () => capped.push(1), 3);
+  assert.equal(capped.length, 3);
+  // Left of the way it runs (y down): up for an eastward run; the corner mitred to (9, -1)... for
+  // d = 1 the corner of an east-then-south run sits at (11, -1).
+  const off = MV.offsetFlat(f, 1);
+  assert.deepEqual(off.slice(0, 2), [0, -1]);
+  assert.ok(Math.abs(off[2] - 11) < 1e-9 && Math.abs(off[3] + 1) < 1e-9);
+  assert.deepEqual(off.slice(4), [11, 10]);
+});
+
+/** A canvas 2D context that takes every call and remembers the text drawn. */
+function recordingCtx() {
+  const texts = [];
+  const target = { texts, measureText: s => ({ width: String(s).length * 6 }), fillText: s => texts.push(String(s)) };
+  return new Proxy(target, {
+    get: (o, k) => (k in o ? o[k] : () => {}),
+    set: (o, k, v) => { o[k] = v; return true; },
+  });
+}
+
+test('drawMarks draws every kind, reports the legend entries drawn and places labels', () => {
+  const map = { view: { cx: 0, cz: 0, bpp: 0.2, w: 800, h: 600 }, copies: () => [0] };
+  const track = { id: 'rail.track', style: { color: '#2f6db5', width: 2, line: 'rail' }, legend: [{ label: 'Network 1', color: '#2f6db5', line: 'rail' }] };
+  const stations = { id: 'rail.stations', style: { color: 'ink', glyph: 'station', size: 7, label_bpp: 24 }, legend: [{ label: 'Station', color: 'ink', glyph: 'station' }], priority: 85 };
+  const trains = { id: 'rail.trains', kinds: ['train'], style: { color: 'ink', label_bpp: 4 }, legend: [{ label: 'Running', color: 'ink' }, { label: 'Standing', color: 'ink', st: 'off' }] };
+  const chains = { id: 'logi.chains', style: { color: '#b7791f', width: 1.5, line: 'chain' }, legend: [{ label: 'Chain', color: '#b7791f', line: 'chain' }, { label: 'Packages', color: '#b7791f', glyph: 'dot' }] };
+  const districts = { id: 'industry.districts', style: { color: '#2a7f7a' }, legend: [] };
+  const list = [
+    { desc: districts, data: { marks: [{ k: 'area', id: 'd1', box: [-40, -40, 40, 40], rings: [[[-40, -40], [40, -40], [40, 40], [-40, 40]]], l: 'Iron works', st: 'dash' }] } },
+    { desc: track, data: { marks: [{ k: 'path', id: '0:0', ci: 0, p: [[-50, 0], [0, 0], [30, 20]] }] } },
+    { desc: chains, data: { marks: [{ k: 'path', id: '1,2,3', p: [[-10, -10], [10, -10]], n: 3 }] } },
+    { desc: stations, data: { marks: [{ k: 'point', id: 's', x: 0, z: 0, a: 0, l: 'Center 5', ci: 0 }] } },
+    { desc: trains, data: { marks: [{ k: 'train', id: 't', cars: [[20, 0, 12, 0], [11, 0, 3, 0]], l: 'Ore runner', ci: 1, st: 'off' }] } },
+  ];
+  const ctx = recordingCtx();
+  const out = MV.drawMarks(ctx, map, list, { theme: { dark: true }, selected: { layer: 'rail.trains', id: 't' } });
+  assert.equal(out.drawn, 5);
+  assert.deepEqual([...out.seen.get('rail.track')], [0]);
+  assert.deepEqual([...out.seen.get('logi.chains')].sort(), [-1, 1]);   // no ci: the style; packages: the dot entry
+  assert.deepEqual([...out.seen.get('rail.trains')], [1]);
+  assert.ok(ctx.texts.includes('Center 5'));
+  assert.ok(ctx.texts.includes('Ore runner'));
+  assert.ok(ctx.texts.includes('Iron works'));
+  const kinds = out.targets.map(t => t.kind).sort();
+  assert.deepEqual(kinds, ['poly', 'poly', 'pt', 'rings', 'train']);
+  // Far out the train is a chevron, a point target, and labels give way to the zoom.
+  map.view.bpp = 10;
+  const far = recordingCtx();
+  const out2 = MV.drawMarks(far, map, list, {});
+  assert.equal(out2.targets.find(t => t.id === 't').kind, 'pt');
+  assert.ok(!far.texts.includes('Ore runner'));
+  assert.ok(far.texts.includes('Center 5'));
+});
+
+test('drawSwatch draws every legend entry and layer without throwing', () => {
+  const descs = [
+    { kinds: ['path'], style: { color: '#2f6db5', line: 'rail', width: 2 }, legend: [{ label: 'n', color: '#2f6db5', line: 'rail' }] },
+    { kinds: ['path'], style: { color: 'ink', line: 'belt' }, legend: [{ label: 'b', color: 'ink', line: 'belt' }] },
+    { kinds: ['train'], style: { color: 'ink' }, legend: [{ label: 'r', color: 'ink', glyph: 'train' }, { label: 'd', color: '#d1242f', glyph: 'train', st: 'bad' }] },
+    { kinds: ['point'], style: { color: 'ink', glyph: 'station' }, legend: [{ label: 's', color: 'ink', glyph: 'station', st: 'warn' }, { label: 'g', color: '#2da44e', glyph: 'gauge' }, { label: 'p', color: '#b7791f', glyph: 'port' }, { label: 'x', color: 'ink', glyph: 'circle', st: 'off' }, { label: 'sig', color: '#d1242f', glyph: 'signal' }] },
+    { kinds: ['area'], style: { color: '#2a7f7a' }, legend: [{ label: 'a', color: '#2a7f7a', st: 'dot' }] },
+    { kinds: ['cell'], style: { color: '#888' } },
+  ];
+  for (const d of descs) {
+    MV.drawSwatch(recordingCtx(), d, null, 22, 14, { dark: true });
+    (d.legend || []).forEach((_, i) => MV.drawSwatch(recordingCtx(), d, i, 22, 14, null));
+  }
 });
 
 test('fmtNum: thousands, decimals by size, exponents at the extremes', () => {
