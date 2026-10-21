@@ -1193,6 +1193,9 @@
    * Draws labels on top without overlaps, higher priority first: a point's beside it (right, left,
    * below, above, the first that is free), an area's in italics at its middle, a path's along it.
    */
+  /** How far apart, in CSS px, two labels with the same text must be for both to show. */
+  const REPEAT_PX = 160;
+
   function placeLabels(ctx, labels, W, H, th) {
     labels.sort((a, b) => b.pri - a.pri);
     const boxes = [];
@@ -1200,10 +1203,15 @@
     ctx.lineJoin = 'round';
     ctx.textBaseline = 'middle';
     let n = 0;
+    // A name already on the map close by is not said again (a yard of "Creative motor"s, a row of
+    // trains all called "Retired"): the first one placed stands for them.
+    const said = new Map();
+    const near = (L, text) => (said.get(text) || []).some(([x, y]) => Math.hypot(x - L.x, y - L.y) < REPEAT_PX);
     for (const L of labels) {
       if (n > 600) break;
       let text = String(L.text);
       if (text.length > 48) text = text.slice(0, 47) + '…';
+      if (L.kind !== 'line' && near(L, text)) continue;
       ctx.font = L.kind === 'area' ? `italic 600 12.5px ${FONT}` : L.kind === 'line' ? `500 11px ${FONT}` : `500 12px ${FONT}`;
       const tw = ctx.measureText(text).width, th2 = 14;
       let at = null;
@@ -1236,6 +1244,8 @@
       }
       if (!at) continue;
       boxes.push(at.b);
+      if (!said.has(text)) said.set(text, []);
+      said.get(text).push([L.x, L.y]);
       n++;
       ctx.save();
       ctx.translate(at.x, at.y);
