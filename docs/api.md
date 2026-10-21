@@ -233,6 +233,9 @@ source's lease, VIEWER.md §11).
   9000:127.0.0.1:8740` works); tailnet names (a bare machine name, `*.ts.net`, a tailnet IP) only with
   `allow_tailnet`. Anything else is 403 (no DNS rebinding).
 - Peers must be loopback (or tailnet with the flag).
+- A Unix socket (`Server::start_unix`) is mode 0600, so only its owner connects; a socket a server
+  still answers on is refused, never taken over.
+- A request that panics inside the backend answers 500 and frees its connection slot (at most 64).
 - The viewer page carries `Content-Security-Policy: default-src 'self'; img-src 'self' data: blob:;
   style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'`.
   The page therefore uses no inline scripts, no inline `<style>` and no `style=""` attributes; styles

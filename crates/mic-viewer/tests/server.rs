@@ -266,3 +266,63 @@ fn a_backend_that_never_publishes_has_no_stream_and_keeps_its_budget() {
     assert_eq!(a.layers["ships"].total, 0);
     server.stop();
 }
+
+/// A backend whose cards panic (a bug, a page that fails a check deep inside).
+struct Panicky;
+
+impl Backend for Panicky {
+    fn world(&self) -> WorldInfo {
+        WorldInfo { name: "panicky".into(), source: "save".into(), budget: 2000, ..WorldInfo::default() }
+    }
+    fn layers(&self) -> Arc<Layers> {
+        Arc::new(Layers::default())
+    }
+    fn scene(&self, _frame: &str, _t: Option<Tick>) -> Option<Arc<Scene>> {
+        None
+    }
+    fn card(&self, _layer: &str, _id: &str, _t: Option<Tick>) -> Option<Card> {
+        panic!("a card that cannot be built")
+    }
+}
+
+#[test]
+fn a_panicking_request_answers_500_and_frees_its_connection() {
+    let app = Arc::new(App::new(Arc::new(Panicky)));
+    let mut server = Server::start("127.0.0.1:0".parse().unwrap(), Config::default(), app).unwrap();
+    let addr = server.addr().unwrap();
+    // More panics than connection slots: each one's slot comes back.
+    for _ in 0..mic_viewer::http::MAX_CONNECTIONS + 6 {
+        assert_eq!(ask(addr, "GET", "/api/thing/a/b", "localhost").0, 500);
+    }
+    assert_eq!(ask(addr, "GET", "/api/world", "localhost").0, 200);
+    server.stop();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_unix_socket_is_its_owners_and_is_never_taken_over() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("mic-viewer-sock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("viewer.sock");
+    let app = || Arc::new(App::new(Arc::new(Still))) as Arc<dyn mic_viewer::http::Handler>;
+    let mut first = Server::start_unix(&path, Config::default(), app()).unwrap();
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "only the owner connects");
+    // A second server on the same path is refused while the first answers.
+    let second = Server::start_unix(&path, Config::default(), app());
+    assert_eq!(second.err().map(|e| e.kind()), Some(std::io::ErrorKind::AddrInUse));
+    let mut c = std::os::unix::net::UnixStream::connect(&path).unwrap();
+    write!(c, "GET /api/world HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+    let mut out = String::new();
+    c.read_to_string(&mut out).unwrap();
+    assert!(out.starts_with("HTTP/1.1 200"), "the first still serves: {out}");
+    first.stop();
+    // A stale socket (its server gone without removing it) is replaced.
+    let stale = std::os::unix::net::UnixListener::bind(&path).unwrap();
+    drop(stale);
+    let mut again = Server::start_unix(&path, Config::default(), app()).unwrap();
+    again.stop();
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -321,13 +321,20 @@ impl Server {
         Ok(Server { bound: Bound::Tcp(addr), stop, accept: Some(accept) })
     }
 
-    /// Serves on a Unix socket at `path` (removed first if it is a stale socket). The folder's
-    /// permissions decide who may connect; the `Host` check still applies.
+    /// Serves on a Unix socket at `path`, which only its owner may connect to (mode 0600); the
+    /// `Host` check still applies. A stale socket there is removed first; one a server still
+    /// answers on is refused.
     #[cfg(unix)]
     pub fn start_unix(path: &std::path::Path, config: Config, handler: Arc<dyn Handler>) -> io::Result<Server> {
-        use std::os::unix::fs::FileTypeExt;
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
         if let Ok(meta) = std::fs::symlink_metadata(path) {
             if meta.file_type().is_socket() {
+                if std::os::unix::net::UnixStream::connect(path).is_ok() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::AddrInUse,
+                        format!("a server already answers on {}", path.display()),
+                    ));
+                }
                 std::fs::remove_file(path)?;
             } else {
                 return Err(io::Error::new(
@@ -337,6 +344,7 @@ impl Server {
             }
         }
         let listener = std::os::unix::net::UnixListener::bind(path)?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = Arc::clone(&stop);
         let accept = std::thread::Builder::new()
@@ -466,15 +474,19 @@ fn spawn_conn<C: Conn>(
         let _ = respond(&mut stream, &Response::text(503, "too many connections\n"), false, false);
         return;
     }
-    let (handler, done, stop, allow_tailnet) =
-        (Arc::clone(handler), Arc::clone(active), Arc::clone(stop), config.allow_tailnet);
-    let spawned = std::thread::Builder::new().name(format!("{}-conn", config.name)).spawn(move || {
-        let _ = handle(stream, peer_ok, allow_tailnet, handler.as_ref(), &stop);
-        done.fetch_sub(1, Ordering::AcqRel);
-    });
-    if spawned.is_err() {
-        active.fetch_sub(1, Ordering::AcqRel);
+    // The slot comes back when the guard drops: the thread ends, panics, or never starts.
+    struct Slot(Arc<AtomicUsize>);
+    impl Drop for Slot {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::AcqRel);
+        }
     }
+    let slot = Slot(Arc::clone(active));
+    let (handler, stop, allow_tailnet) = (Arc::clone(handler), Arc::clone(stop), config.allow_tailnet);
+    let _ = std::thread::Builder::new().name(format!("{}-conn", config.name)).spawn(move || {
+        let _slot = slot;
+        let _ = handle(stream, peer_ok, allow_tailnet, handler.as_ref(), &stop);
+    });
 }
 
 fn reason(status: u16) -> &'static str {
@@ -622,7 +634,12 @@ fn handle<C: Conn>(
             return respond(&mut out, &Response::text(403, msg), false, false);
         }
         let head = req.method == "HEAD";
-        match handler.handle(&req) {
+        // A handler that panics answers 500 and the connection closes; the server goes on.
+        let reply = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler.handle(&req)));
+        let Ok(reply) = reply else {
+            return respond(&mut out, &Response::text(500, "the request failed inside the server\n"), head, false);
+        };
+        match reply {
             Reply::Response(resp) => {
                 respond(&mut out, &resp, head, req.keep_alive)?;
                 if !req.keep_alive {
