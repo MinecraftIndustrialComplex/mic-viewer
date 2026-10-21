@@ -375,8 +375,10 @@ button, select, input { font: inherit; color: inherit; }
   margin: 10px 0 2px; padding: 6px 10px; border-radius: 8px;
   background: var(--past-bg); border: 1px solid var(--past-line); color: var(--past); font-size: 12px;
 }
-.kv { display: grid; grid-template-columns: minmax(84px, max-content) minmax(0, 1fr); gap: 5px 16px; margin: 12px 0 4px; }
-.kv dt { color: var(--fg-3); }
+/* A label takes at most 60% of the row and wraps beyond it, so a long label never squeezes its
+   value to one letter a line; short labels still line up on an 84px column. */
+.kv { display: grid; grid-template-columns: fit-content(60%) minmax(0, 1fr); gap: 5px 16px; margin: 12px 0 4px; }
+.kv dt { color: var(--fg-3); min-width: 84px; }
 .kv dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .kv dd.num { font-variant-numeric: tabular-nums; }
 .linkbtn {

@@ -223,6 +223,8 @@ def desktop(s, base):
         title = b.wait_for(f"(() => {{ const t = document.querySelector('#card-body .card-title'); return !document.getElementById('card').hidden && t && t.textContent === {json.dumps(card['title'])} ? t.textContent : null; }})()", timeout=8)
         s.check(bool(title), "clicking the village opens its card", card["title"])
         s.check(b.eval("document.querySelectorAll('#card-body .kv dt').length") >= 2, "the card shows its fields")
+        narrow = b.eval("[...document.querySelectorAll('#card-body .kv')].filter(d => [...d.querySelectorAll('dd')].some(v => v.clientWidth < 0.3 * d.clientWidth)).length")
+        s.check(narrow == 0, "every card value keeps at least 30% of its row", f"{narrow} lists squeezed")
         s.check(b.eval("!!document.querySelector('#card-body .spark-svg path.spark-line')"), "the card draws its series as a sparkline")
         s.check(bool(b.wait_for("location.hash.includes('card=settle.villages/')", timeout=3)), "the card is in the URL hash")
         link = b.eval("!!document.querySelector('#card-body .linkbtn')")
