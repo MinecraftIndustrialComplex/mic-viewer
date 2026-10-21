@@ -33,12 +33,20 @@ pub enum Rendered {
     Empty,
 }
 
+/// Why a tile has no pixels.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TileError {
+    /// No such tile: a layer the source does not have, an index outside the pyramid. Answered 404.
+    Missing(String),
+    /// The tile exists but could not be drawn (a read failed). Answered 500.
+    Failed(String),
+}
+
 /// A base map. `z` is the pyramid's zoom (docs/api.md §2.2); indices may be negative where the
 /// pyramid is unbounded.
 pub trait TileSource: Send + Sync + 'static {
-    /// The tile's pixels. `Err` for a tile that does not exist (a layer it does not have, an index
-    /// outside the pyramid): answered 404.
-    fn render(&self, layer: &str, z: i32, x: i64, y: i64) -> Result<Rendered, String>;
+    /// The tile's pixels.
+    fn render(&self, layer: &str, z: i32, x: i64, y: i64) -> Result<Rendered, TileError>;
     /// Whether the layer has no transparent pixels (it is then stored as RGB, a quarter smaller).
     fn opaque(&self, layer: &str) -> bool;
     /// Bumped whenever what a tile looks like changes; it names the cache folder.
@@ -121,7 +129,11 @@ impl TileCache {
                 let name = e.file_name();
                 let name = name.to_string_lossy();
                 // Only version folders: the cache's parent may hold other things.
-                if e.path() != *root && name.starts_with('v') && name[1..].bytes().all(|b| b.is_ascii_digit()) && name.len() > 1 {
+                if e.path() != *root
+                    && name.starts_with('v')
+                    && name[1..].bytes().all(|b| b.is_ascii_digit())
+                    && name.len() > 1
+                {
                     let _ = std::fs::remove_dir_all(e.path());
                 }
             }
@@ -270,33 +282,42 @@ impl Tiles {
 
     /// Answers `rest` = `<layer>/<z>/<x>/<y>.png`.
     pub fn serve(&self, rest: &str) -> Response {
-        let Some((layer, z, x, y)) = parse_tile_path(rest) else {
-            return Response::error(404, "tiles are <layer>/<z>/<x>/<y>.png");
-        };
-        let key = format!("{layer}/{z}/{x}/{y}.png");
-        let cache = if self.immutable { IMMUTABLE } else { NO_CACHE };
-        if let Some(bytes) = self.cache.get(&key) {
-            return Response::ok("image/png", cache, (*bytes).clone());
+        serve(&*self.source, &self.cache, self.immutable, rest)
+    }
+}
+
+/// Answers `rest` = `<layer>/<z>/<x>/<y>.png` from `cache`, drawing the tile with `source` (and
+/// storing it) on a miss: 200 with the PNG, 204 for an empty tile, 404 for a path that does not
+/// parse or a tile the source does not have, 500 when drawing or encoding fails. For a server that
+/// keeps its own sources and caches (Deep Time: one per run); [`Tiles`] pairs one of each.
+pub fn serve(source: &dyn TileSource, cache: &TileCache, immutable: bool, rest: &str) -> Response {
+    let Some((layer, z, x, y)) = parse_tile_path(rest) else {
+        return Response::error(404, "tiles are <layer>/<z>/<x>/<y>.png");
+    };
+    let key = format!("{layer}/{z}/{x}/{y}.png");
+    let policy = if immutable { IMMUTABLE } else { NO_CACHE };
+    if let Some(bytes) = cache.get(&key) {
+        return Response::ok("image/png", policy, Arc::unwrap_or_clone(bytes));
+    }
+    let rgba = match source.render(layer, z, x, y) {
+        Ok(Rendered::Rgba(px)) => px,
+        Ok(Rendered::Empty) => return Response::no_content(),
+        Err(TileError::Missing(e)) => return Response::error(404, e),
+        Err(TileError::Failed(e)) => return Response::error(500, format!("tile {key}: {e}")),
+    };
+    let encoded = if source.opaque(layer) {
+        let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
+        encode_png_rgb(TILE, TILE, &rgb)
+    } else {
+        encode_png(TILE, TILE, &rgba)
+    };
+    match encoded {
+        Ok(b) => {
+            let b = Arc::new(b);
+            cache.put(&key, Arc::clone(&b));
+            Response::ok("image/png", policy, Arc::unwrap_or_clone(b))
         }
-        let rgba = match self.source.render(layer, z, x, y) {
-            Ok(Rendered::Rgba(px)) => px,
-            Ok(Rendered::Empty) => return Response::no_content(),
-            Err(e) => return Response::error(404, e),
-        };
-        let encoded = if self.source.opaque(layer) {
-            let rgb: Vec<u8> = rgba.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
-            encode_png_rgb(TILE, TILE, &rgb)
-        } else {
-            encode_png(TILE, TILE, &rgba)
-        };
-        match encoded {
-            Ok(b) => {
-                let b = Arc::new(b);
-                self.cache.put(&key, Arc::clone(&b));
-                Response::ok("image/png", cache, Arc::unwrap_or_clone(b))
-            }
-            Err(e) => Response::error(500, format!("tile {key}: {e}")),
-        }
+        Err(e) => Response::error(500, format!("tile {key}: {e}")),
     }
 }
 
@@ -381,15 +402,16 @@ mod tests {
 
     struct Checker;
     impl TileSource for Checker {
-        fn render(&self, layer: &str, z: i32, x: i64, y: i64) -> Result<Rendered, String> {
+        fn render(&self, layer: &str, z: i32, x: i64, y: i64) -> Result<Rendered, TileError> {
             match layer {
                 "check" if z <= 0 => {
                     let v = if (x + y).rem_euclid(2) == 0 { 255 } else { 0 };
                     Ok(Rendered::Rgba(vec![v; (TILE * TILE * 4) as usize]))
                 }
-                "check" => Err(format!("no zoom {z}")),
+                "check" => Err(TileError::Missing(format!("no zoom {z}"))),
                 "empty" => Ok(Rendered::Empty),
-                _ => Err(format!("no layer {layer}")),
+                "broken" => Err(TileError::Failed("the disk is gone".into())),
+                _ => Err(TileError::Missing(format!("no layer {layer}"))),
             }
         }
         fn opaque(&self, layer: &str) -> bool {
@@ -413,6 +435,8 @@ mod tests {
         assert_eq!(tiles.serve("empty/0/0/0.png").status, 204);
         assert_eq!(tiles.serve("check/1/0/0.png").status, 404);
         assert_eq!(tiles.serve("nope/0/0/0.png").status, 404);
+        assert_eq!(tiles.serve("broken/0/0/0.png").status, 500);
+        assert_eq!(tiles.cache.stats().1, 1, "only drawn tiles are kept");
         assert_eq!(tiles.serve("check/0/0").status, 404);
         let png = png::Decoder::new(std::io::Cursor::new(a.body)).read_info().unwrap();
         assert_eq!(png.info().color_type, png::ColorType::Rgb);

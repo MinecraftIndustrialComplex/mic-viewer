@@ -11,7 +11,13 @@ use mic_viewer_demo::{Demo, HALF, LAYER_IDS, OVERWORLD, RING, Size};
 
 fn get(app: &App<Demo>, path: &str) -> (u16, Vec<u8>) {
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
-    let req = Request { method: "GET".into(), path: path.into(), query: query.into(), host: "localhost".into(), ..Request::default() };
+    let req = Request {
+        method: "GET".into(),
+        path: path.into(),
+        query: query.into(),
+        host: "localhost".into(),
+        ..Request::default()
+    };
     match app.handle(&req) {
         Reply::Response(r) => (r.status, r.body),
         Reply::Stream(_) => (200, Vec::new()),
@@ -19,7 +25,10 @@ fn get(app: &App<Demo>, path: &str) -> (u16, Vec<u8>) {
 }
 
 fn marks(app: &App<Demo>, frame: &str, b: [f64; 4], bpp: f64, layers: &str) -> MarksAnswer {
-    let (st, body) = get(app, &format!("/api/marks?frame={frame}&x0={}&z0={}&x1={}&z1={}&bpp={bpp}&layers={layers}", b[0], b[1], b[2], b[3]));
+    let (st, body) = get(
+        app,
+        &format!("/api/marks?frame={frame}&x0={}&z0={}&x1={}&z1={}&bpp={bpp}&layers={layers}", b[0], b[1], b[2], b[3]),
+    );
     assert_eq!(st, 200, "{}", String::from_utf8_lossy(&body));
     serde_json::from_slice(&body).unwrap()
 }

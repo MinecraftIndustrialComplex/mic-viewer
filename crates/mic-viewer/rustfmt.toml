@@ -1,0 +1,5 @@
+# In the crate's folder, not the repository's, so a vendored copy (Deep Time's vendor/mic-viewer,
+# docs/choices-viewer.md VC4) keeps this style under the consumer's `cargo fmt --all --check`.
+edition = "2024"
+max_width = 120
+use_small_heuristics = "Max"

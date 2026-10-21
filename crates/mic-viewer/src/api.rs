@@ -72,7 +72,14 @@ impl Default for ProjectionDesc {
 
 impl ProjectionDesc {
     pub fn flat() -> Self {
-        ProjectionDesc { kind: "flat".into(), period_x: 0.0, z_range: None, script: None, factory: None, args: serde_json::Value::Null }
+        ProjectionDesc {
+            kind: "flat".into(),
+            period_x: 0.0,
+            z_range: None,
+            script: None,
+            factory: None,
+            args: serde_json::Value::Null,
+        }
     }
 
     pub fn xwrap(period: f64, z_range: Option<[f64; 2]>) -> Self {
@@ -227,7 +234,8 @@ impl LayerDesc {
     }
 
     pub fn legend(mut self, entries: &[(&str, &str)]) -> Self {
-        self.legend = entries.iter().map(|(l, c)| LegendEntry { label: (*l).into(), color: (*c).into(), glyph: None }).collect();
+        self.legend =
+            entries.iter().map(|(l, c)| LegendEntry { label: (*l).into(), color: (*c).into(), glyph: None }).collect();
         self
     }
 
@@ -388,9 +396,11 @@ impl Mark {
     /// Sets the legend index (no-op for kinds without one).
     pub fn with_ci(mut self, v: u16) -> Mark {
         match &mut self {
-            Mark::Point { ci, .. } | Mark::Leg { ci, .. } | Mark::Path { ci, .. } | Mark::Edge { ci, .. } | Mark::Area { ci, .. } => {
-                *ci = Some(v)
-            }
+            Mark::Point { ci, .. }
+            | Mark::Leg { ci, .. }
+            | Mark::Path { ci, .. }
+            | Mark::Edge { ci, .. }
+            | Mark::Area { ci, .. } => *ci = Some(v),
             _ => {}
         }
         self
@@ -399,9 +409,11 @@ impl Mark {
     /// Sets an explicit colour.
     pub fn with_color(mut self, v: &str) -> Mark {
         match &mut self {
-            Mark::Point { c, .. } | Mark::Leg { c, .. } | Mark::Path { c, .. } | Mark::Edge { c, .. } | Mark::Area { c, .. } => {
-                *c = Some(v.to_owned())
-            }
+            Mark::Point { c, .. }
+            | Mark::Leg { c, .. }
+            | Mark::Path { c, .. }
+            | Mark::Edge { c, .. }
+            | Mark::Area { c, .. } => *c = Some(v.to_owned()),
             _ => {}
         }
         self
@@ -457,7 +469,11 @@ impl Mark {
     /// The legend index, when it has one.
     pub fn legend_index(&self) -> Option<u16> {
         match self {
-            Mark::Point { ci, .. } | Mark::Leg { ci, .. } | Mark::Path { ci, .. } | Mark::Edge { ci, .. } | Mark::Area { ci, .. } => *ci,
+            Mark::Point { ci, .. }
+            | Mark::Leg { ci, .. }
+            | Mark::Path { ci, .. }
+            | Mark::Edge { ci, .. }
+            | Mark::Area { ci, .. } => *ci,
             _ => None,
         }
     }
@@ -858,7 +874,16 @@ mod tests {
     #[test]
     fn bboxes() {
         assert_eq!(Mark::disc(None, 10.0, 20.0, 5.0).bbox(), [5.0, 15.0, 15.0, 25.0]);
-        let leg = Mark::Leg { id: "1".into(), p: vec![[0.0, 5.0, 10.0, -5.0], [10.0, -5.0, 20.0, 0.0]], t0: 0, t1: 1, ci: None, c: None, g: None, l: None };
+        let leg = Mark::Leg {
+            id: "1".into(),
+            p: vec![[0.0, 5.0, 10.0, -5.0], [10.0, -5.0, 20.0, 0.0]],
+            t0: 0,
+            t1: 1,
+            ci: None,
+            c: None,
+            g: None,
+            l: None,
+        };
         assert_eq!(leg.bbox(), [0.0, -5.0, 20.0, 5.0]);
     }
 }

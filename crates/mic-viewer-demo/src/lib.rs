@@ -15,7 +15,7 @@ use mic_viewer::api::{
     ProjectionDesc, PyramidDesc, Section, Series, TICKS_PER_DAY, Tick, TileLayerDesc, TimeInfo, WorldInfo,
 };
 use mic_viewer::scene::{Scene, SceneWriter};
-use mic_viewer::tiles::{Rendered, TILE, TileCache, TileSource, Tiles};
+use mic_viewer::tiles::{Rendered, TILE, TileCache, TileError, TileSource, Tiles};
 use mic_viewer::viewer::{Backend, Changes, EventQuery};
 
 pub const OVERWORLD: &str = "minecraft:overworld";
@@ -56,7 +56,9 @@ impl Rng {
 }
 
 fn hash2(seed: u64, x: i64, z: i64) -> f64 {
-    let mut r = Rng::new(seed ^ (x as u64).wrapping_mul(0x632b_e59b_d9b4_e019) ^ (z as u64).wrapping_mul(0x8cb9_2ba7_2f3d_8dd7));
+    let mut r = Rng::new(
+        seed ^ (x as u64).wrapping_mul(0x632b_e59b_d9b4_e019) ^ (z as u64).wrapping_mul(0x8cb9_2ba7_2f3d_8dd7),
+    );
     r.f()
 }
 
@@ -89,8 +91,8 @@ pub fn terrain(seed: u64, x: f64, z: f64) -> f64 {
 }
 
 const SYL: &[&str] = &[
-    "ash", "ford", "oak", "vale", "mor", "wick", "brook", "dun", "elm", "hal", "ston", "ley", "bar", "row", "kel", "mere", "thorn",
-    "by", "wyn", "gar", "tor", "ridge", "fen", "holt",
+    "ash", "ford", "oak", "vale", "mor", "wick", "brook", "dun", "elm", "hal", "ston", "ley", "bar", "row", "kel",
+    "mere", "thorn", "by", "wyn", "gar", "tor", "ridge", "fen", "holt",
 ];
 
 fn name(r: &mut Rng) -> String {
@@ -248,16 +250,18 @@ impl World {
         let mut seen = std::collections::HashSet::new();
         if villages.len() <= 5000 {
             for v in &villages {
-                let mut near: Vec<(f64, usize)> = villages
-                    .iter()
-                    .filter(|w| w.id != v.id)
-                    .map(|w| ((w.x - v.x).hypot(w.z - v.z), w.id))
-                    .collect();
+                let mut near: Vec<(f64, usize)> =
+                    villages.iter().filter(|w| w.id != v.id).map(|w| ((w.x - v.x).hypot(w.z - v.z), w.id)).collect();
                 near.sort_by(|a, b| a.0.total_cmp(&b.0));
                 for &(d, w) in near.iter().take(2) {
                     let key = (v.id.min(w), v.id.max(w));
                     if d < 1800.0 && seen.insert(key) {
-                        roads.push(Road { a: key.0, b: key.1, flow: r.range(0.5, 12.0), hazard: [0, 0, 0, 1, 1, 2][r.below(6)] });
+                        roads.push(Road {
+                            a: key.0,
+                            b: key.1,
+                            flow: r.range(0.5, 12.0),
+                            hazard: [0, 0, 0, 1, 1, 2][r.below(6)],
+                        });
                     }
                 }
             }
@@ -328,14 +332,17 @@ impl World {
             }
         }
         let lairs = (0..14)
-            .map(|_| loop {
-                let (x, z) = (r.range(-HALF * 0.9, HALF * 0.9), r.range(-HALF * 0.9, HALF * 0.9));
-                if terrain(seed, x, z) > 0.45 {
-                    break [x, z];
+            .map(|_| {
+                loop {
+                    let (x, z) = (r.range(-HALF * 0.9, HALF * 0.9), r.range(-HALF * 0.9, HALF * 0.9));
+                    if terrain(seed, x, z) > 0.45 {
+                        break [x, z];
+                    }
                 }
             })
             .collect();
-        let mut w = World { seed, villages, roads, herds, factions, feuds, districts, lines, lairs, events: Vec::new() };
+        let mut w =
+            World { seed, villages, roads, herds, factions, feuds, districts, lines, lairs, events: Vec::new() };
         w.events = w.history(&mut r, START - size.days_of_events * TICKS_PER_DAY, START);
         w
     }
@@ -417,10 +424,19 @@ impl World {
         }
         for v in &self.villages {
             let s = (f64::from(v.pop) / 60.0).sqrt().clamp(0.6, 3.0);
-            w.mark("settle.villages", Mark::point(v.id, v.x, v.z).with_ci(v.kind).with_size(s).with_label(v.name.clone()));
+            w.mark(
+                "settle.villages",
+                Mark::point(v.id, v.x, v.z).with_ci(v.kind).with_size(s).with_label(v.name.clone()),
+            );
             w.mark("settle.labels", Mark::Label { x: v.x, z: v.z, text: v.name.clone() });
             let p = v.prices[0];
-            let ci = if p < 0.85 { 0 } else if p < 1.15 { 1 } else { 2 };
+            let ci = if p < 0.85 {
+                0
+            } else if p < 1.15 {
+                1
+            } else {
+                2
+            };
             w.mark("trade.prices", Mark::point(v.id, v.x, v.z).with_ci(ci).with_size(1.2));
         }
         for (i, rd) in self.roads.iter().enumerate() {
@@ -445,7 +461,13 @@ impl World {
             w.mark("ecology.herds", Mark::disc(Some(h.id.to_string()), at[0], at[1], r).with_ci(species_ci(h.species)));
             w.mark(
                 "ecology.routes",
-                Mark::Path { id: Some(h.id.to_string()), p: h.route.clone(), ci: Some(species_ci(h.species)), c: None, w: Some(1.5) },
+                Mark::Path {
+                    id: Some(h.id.to_string()),
+                    p: h.route.clone(),
+                    ci: Some(species_ci(h.species)),
+                    c: None,
+                    w: Some(1.5),
+                },
             );
         }
         for (i, lair) in self.lairs.iter().enumerate() {
@@ -457,16 +479,16 @@ impl World {
             if !self.villages.is_empty() {
                 let v = &self.villages[(i * 37) % self.villages.len()];
                 let half = cycle / 2;
-                let (p, q, t0) = if t - start < half {
-                    (*lair, [v.x, v.z], start)
-                } else {
-                    ([v.x, v.z], *lair, start + half)
-                };
+                let (p, q, t0) =
+                    if t - start < half { (*lair, [v.x, v.z], start) } else { ([v.x, v.z], *lair, start + half) };
                 w.mark("ecology.dragons", Mark::leg(i, p, q, t0, t0 + half / 2).with_ci((i % 3) as u16));
             }
         }
         for f in &self.factions {
-            w.mark("conflict.factions", Mark::disc(Some(f.id.to_string()), f.x, f.z, f.r).with_ci(f.culture).with_label(f.name.clone()));
+            w.mark(
+                "conflict.factions",
+                Mark::disc(Some(f.id.to_string()), f.x, f.z, f.r).with_ci(f.culture).with_label(f.name.clone()),
+            );
         }
         for &(a, b, step) in &self.feuds {
             let (fa, fb) = (&self.factions[a], &self.factions[b]);
@@ -481,7 +503,11 @@ impl World {
         }
         for (i, &(a, b, trips)) in self.lines.iter().enumerate() {
             let (da, db) = (&self.districts[a].b, &self.districts[b].b);
-            let mut m = Mark::edge([(da[0] + da[2]) / 2.0, (da[1] + da[3]) / 2.0], [(db[0] + db[2]) / 2.0, (db[1] + db[3]) / 2.0], 1.0 + f64::from(trips) / 10.0);
+            let mut m = Mark::edge(
+                [(da[0] + da[2]) / 2.0, (da[1] + da[3]) / 2.0],
+                [(db[0] + db[2]) / 2.0, (db[1] + db[3]) / 2.0],
+                1.0 + f64::from(trips) / 10.0,
+            );
             if let Mark::Edge { id, .. } = &mut m {
                 *id = Some(i.to_string());
             }
@@ -496,7 +522,20 @@ impl World {
                 (h > 0.0).then(|| (30.0 - cz / HALF * 18.0 - h * 25.0).round())
             })
             .collect();
-        w.mark("space.heat", Mark::Cell { x0: -HALF, z0: -HALF, size: 512.0, w: n, h: n, v, ramp: Some("heat".into()), lo: Some(-10.0), hi: Some(45.0) });
+        w.mark(
+            "space.heat",
+            Mark::Cell {
+                x0: -HALF,
+                z0: -HALF,
+                size: 512.0,
+                w: n,
+                h: n,
+                v,
+                ramp: Some("heat".into()),
+                lo: Some(-10.0),
+                hi: Some(45.0),
+            },
+        );
         w.finish(t, 0.0)
     }
 
@@ -508,9 +547,13 @@ impl World {
         let mut r = Rng::new(self.seed ^ 77);
         let mut pts = Vec::new();
         for i in 0..40 {
-            let (x, z) = (r.range(-RING_PERIOD / 2.0, RING_PERIOD / 2.0), r.range(-RING_HALF_Z * 0.9, RING_HALF_Z * 0.9));
+            let (x, z) =
+                (r.range(-RING_PERIOD / 2.0, RING_PERIOD / 2.0), r.range(-RING_HALF_Z * 0.9, RING_HALF_Z * 0.9));
             pts.push([x, z]);
-            w.mark("settle.villages", Mark::point(format!("r{i}"), x.round(), z.round()).with_ci((i % 2) as u16).with_label(name(&mut r)));
+            w.mark(
+                "settle.villages",
+                Mark::point(format!("r{i}"), x.round(), z.round()).with_ci((i % 2) as u16).with_label(name(&mut r)),
+            );
         }
         // A caravan that crosses the seam: the source cuts its leg in two pieces.
         let half = RING_PERIOD / 2.0;
@@ -563,7 +606,15 @@ impl World {
                 let neighbours: Vec<String> = self
                     .roads
                     .iter()
-                    .filter_map(|r| if r.a == v.id { Some(r.b) } else if r.b == v.id { Some(r.a) } else { None })
+                    .filter_map(|r| {
+                        if r.a == v.id {
+                            Some(r.b)
+                        } else if r.b == v.id {
+                            Some(r.a)
+                        } else {
+                            None
+                        }
+                    })
                     .map(|o| self.villages[o].name.clone())
                     .collect();
                 Card::new(layer, v.id, v.name.clone())
@@ -591,7 +642,11 @@ impl World {
                     .field("Stage", if progress >= 1.0 { "resting" } else { "on the road" })
                     .field_unit("Progress", (progress * 100.0).round(), "%")
                     .field("Members", 3 + n % 9)
-                    .section(Section::new("Cargo").field_unit("grain", 64 + (n % 5) * 16, "items").field_unit("cloth", 12 + n % 20, "items"))
+                    .section(Section::new("Cargo").field_unit("grain", 64 + (n % 5) * 16, "items").field_unit(
+                        "cloth",
+                        12 + n % 20,
+                        "items",
+                    ))
             }
             "travel.roads" => {
                 let rd = self.roads.get(n)?;
@@ -609,7 +664,12 @@ impl World {
                     .at(at[0], at[1])
                     .field("Head", h.count)
                     .field_unit("Loop", h.period / TICKS_PER_DAY, "days")
-                    .section(Section::new("Ledger this year").field("Born", h.count / 9).field("Died", h.count / 14).field("Eaten", h.count / 40))
+                    .section(
+                        Section::new("Ledger this year")
+                            .field("Born", h.count / 9)
+                            .field("Died", h.count / 14)
+                            .field("Eaten", h.count / 40),
+                    )
             }
             "ecology.lairs" | "ecology.dragons" => {
                 let l = self.lairs.get(n)?;
@@ -696,8 +756,17 @@ pub fn layers() -> Layers {
             LayerDesc::new("settle.villages", "settlements", "Villages", "point", "#e0b04a")
                 .describe("Villages and bases, sized by population")
                 .priority(10)
-                .legend(&[("Human", "#e0b04a"), ("Ribbit", "#7ccf6b"), ("Player base", "#5eb1ef"), ("Haven", "#c9a3f5")]),
-            LayerDesc::new("settle.labels", "settlements", "Names", "label", "#e8e2d0").describe("Village names up close").priority(1).zoom(0.0, 6.0).no_cards(),
+                .legend(&[
+                    ("Human", "#e0b04a"),
+                    ("Ribbit", "#7ccf6b"),
+                    ("Player base", "#5eb1ef"),
+                    ("Haven", "#c9a3f5"),
+                ]),
+            LayerDesc::new("settle.labels", "settlements", "Names", "label", "#e8e2d0")
+                .describe("Village names up close")
+                .priority(1)
+                .zoom(0.0, 6.0)
+                .no_cards(),
             LayerDesc::new("trade.prices", "trade", "Grain price", "point", "#3fb8af")
                 .describe("Each village's grain price against its anchor")
                 .priority(4)
@@ -716,13 +785,28 @@ pub fn layers() -> Layers {
             LayerDesc::new("ecology.herds", "ecology", "Herds", "area", "#46a758")
                 .describe("Herd footprints, sized by head count")
                 .priority(3)
-                .legend(&[("Bison", "#8d6e4f"), ("Deer", "#b08a5a"), ("Mammoth", "#9a8478"), ("Elk", "#7f9a5a"), ("Boar", "#6b5b4f")]),
+                .legend(&[
+                    ("Bison", "#8d6e4f"),
+                    ("Deer", "#b08a5a"),
+                    ("Mammoth", "#9a8478"),
+                    ("Elk", "#7f9a5a"),
+                    ("Boar", "#6b5b4f"),
+                ]),
             LayerDesc::new("ecology.routes", "ecology", "Herd routes", "path", "#46a758")
                 .describe("The loops herds walk")
                 .priority(2)
                 .off()
-                .legend(&[("Bison", "#8d6e4f"), ("Deer", "#b08a5a"), ("Mammoth", "#9a8478"), ("Elk", "#7f9a5a"), ("Boar", "#6b5b4f")]),
-            LayerDesc::new("ecology.lairs", "ecology", "Dragon lairs", "point", "#8e4ec6").describe("Lairs and their hoards").priority(7).glyph("triangle", 7.0),
+                .legend(&[
+                    ("Bison", "#8d6e4f"),
+                    ("Deer", "#b08a5a"),
+                    ("Mammoth", "#9a8478"),
+                    ("Elk", "#7f9a5a"),
+                    ("Boar", "#6b5b4f"),
+                ]),
+            LayerDesc::new("ecology.lairs", "ecology", "Dragon lairs", "point", "#8e4ec6")
+                .describe("Lairs and their hoards")
+                .priority(7)
+                .glyph("triangle", 7.0),
             LayerDesc::new("ecology.dragons", "ecology", "Dragons", "leg", "#d19dff")
                 .describe("Dragons in flight")
                 .priority(9)
@@ -735,12 +819,26 @@ pub fn layers() -> Layers {
             LayerDesc::new("conflict.feuds", "conflict", "Feuds", "edge", "#d6409f")
                 .describe("Feuds between factions, coloured by step")
                 .priority(6)
-                .legend(&[("Notice", "#a18072"), ("Insult", "#e9a23b"), ("Raid", "#f76b15"), ("War", "#e5484d"), ("Siege", "#b4235a")]),
+                .legend(&[
+                    ("Notice", "#a18072"),
+                    ("Insult", "#e9a23b"),
+                    ("Raid", "#f76b15"),
+                    ("War", "#e5484d"),
+                    ("Siege", "#b4235a"),
+                ]),
             LayerDesc::new("industry.districts", "industry", "Districts", "area", "#f76b15")
                 .describe("Industrial districts, the box of their chunks")
                 .priority(6)
-                .legend(&[("Replaying", "#f76b15"), ("Learning", "#5eb1ef"), ("Stopped", "#8b8d98"), ("Starved", "#e5484d")]),
-            LayerDesc::new("industry.lines", "industry", "Train lines", "edge", "#5eb1ef").describe("Train lines, width by trips a day").priority(4).off(),
+                .legend(&[
+                    ("Replaying", "#f76b15"),
+                    ("Learning", "#5eb1ef"),
+                    ("Stopped", "#8b8d98"),
+                    ("Starved", "#e5484d"),
+                ]),
+            LayerDesc::new("industry.lines", "industry", "Train lines", "edge", "#5eb1ef")
+                .describe("Train lines, width by trips a day")
+                .priority(4)
+                .off(),
             LayerDesc::new("space.heat", "space", "Temperature", "cell", "#ff6b4a")
                 .describe("Year-round temperature, degrees C, 512-block cells")
                 .priority(0)
@@ -774,12 +872,12 @@ pub fn terrain_color(h: f64) -> [u8; 3] {
 }
 
 impl TileSource for Terrain {
-    fn render(&self, layer: &str, z: i32, x: i64, y: i64) -> Result<Rendered, String> {
+    fn render(&self, layer: &str, z: i32, x: i64, y: i64) -> Result<Rendered, TileError> {
         if layer != "terrain" {
-            return Err(format!("no layer {layer}"));
+            return Err(TileError::Missing(format!("no layer {layer}")));
         }
         if !(-7..=0).contains(&z) {
-            return Err(format!("zoom {z} is outside -7 to 0"));
+            return Err(TileError::Missing(format!("zoom {z} is outside -7 to 0")));
         }
         let px = 2f64.powi(-z);
         let span = px * f64::from(TILE);
@@ -900,7 +998,11 @@ impl Backend for Demo {
         WorldInfo {
             name: "Demo world".into(),
             source: "demo".into(),
-            source_note: Some(if self.running { "synthetic, moving at 20 ticks a second".into() } else { "synthetic, clock stopped".into() }),
+            source_note: Some(if self.running {
+                "synthetic, moving at 20 ticks a second".into()
+            } else {
+                "synthetic, clock stopped".into()
+            }),
             build: format!("mic-viewer-demo {}", env!("CARGO_PKG_VERSION")),
             frames: vec![
                 Frame {

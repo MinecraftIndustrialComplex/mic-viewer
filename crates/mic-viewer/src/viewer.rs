@@ -175,8 +175,10 @@ impl<B: Backend> App<B> {
         // Pad the box by a bin so marks just outside still draw at the edge.
         let pad = aggregate::BIN_PX * bpp;
         let b = [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
-        let found: Vec<Vec<&crate::api::Mark>> =
-            layers.iter().map(|(id, _)| scene.layers.get(*id).map(|r| r.in_box(b, scene.period_x)).unwrap_or_default()).collect();
+        let found: Vec<Vec<&crate::api::Mark>> = layers
+            .iter()
+            .map(|(id, _)| scene.layers.get(*id).map(|r| r.in_box(b, scene.period_x)).unwrap_or_default())
+            .collect();
         let needs: Vec<usize> = found.iter().map(Vec::len).collect();
         let budget = self.backend.world().budget.max(1);
         let shares = aggregate::share(budget, &needs);
@@ -197,7 +199,14 @@ impl<B: Backend> App<B> {
             return Err(Response::error(400, "to is before from"));
         }
         let limit = req.num::<usize>("limit").or(req.num::<usize>("buckets")).unwrap_or(default_limit).clamp(1, max);
-        Ok(EventQuery { frame: req.param("frame"), from, to, area: query_box(req), kinds: parse_list(req.param("kinds")), limit })
+        Ok(EventQuery {
+            frame: req.param("frame"),
+            from,
+            to,
+            area: query_box(req),
+            kinds: parse_list(req.param("kinds")),
+            limit,
+        })
     }
 
     fn stream(&self) -> Reply {
@@ -275,7 +284,9 @@ impl<B: Backend> Handler for App<B> {
         let path = req.path.as_str();
         match path {
             "/" | "/index.html" => {
-                return Response::ok("text/html; charset=utf-8", NO_CACHE, assets::PAGE.as_bytes().to_vec()).with_csp(VIEWER_CSP).into();
+                return Response::ok("text/html; charset=utf-8", NO_CACHE, assets::PAGE.as_bytes().to_vec())
+                    .with_csp(VIEWER_CSP)
+                    .into();
             }
             "/api/world" => return Response::json_of(&self.backend.world()).into(),
             "/api/layers" => return Response::json_of(&*self.backend.layers()).into(),
@@ -298,7 +309,9 @@ impl<B: Backend> Handler for App<B> {
             _ => {}
         }
         if let Some(rest) = path.strip_prefix("/api/thing/") {
-            let Some((layer, id)) = rest.split_once('/') else { return Response::error(404, "/api/thing/<layer>/<id>").into() };
+            let Some((layer, id)) = rest.split_once('/') else {
+                return Response::error(404, "/api/thing/<layer>/<id>").into();
+            };
             let (layer, id) = (crate::http::percent_decode(layer), crate::http::percent_decode(id));
             return match self.backend.card(&layer, &id, req.num::<Tick>("t")) {
                 Some(card) => Response::json_of(&card),

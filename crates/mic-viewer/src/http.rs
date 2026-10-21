@@ -55,7 +55,8 @@ pub fn tailnet(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(a) => a.octets()[0] == 100 && a.octets()[1] & 0xc0 == 0x40,
         IpAddr::V6(a) => {
-            a.to_ipv4_mapped().is_some_and(|v4| tailnet(IpAddr::V4(v4))) || a.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0]
+            a.to_ipv4_mapped().is_some_and(|v4| tailnet(IpAddr::V4(v4)))
+                || a.segments()[..3] == [0xfd7a, 0x115c, 0xa1e0]
         }
     }
 }
@@ -195,13 +196,21 @@ impl Response {
     }
 
     pub fn json(status: u16, v: &serde_json::Value) -> Response {
-        Response { status, content_type: "application/json".into(), cache: NO_STORE, body: v.to_string().into_bytes(), csp: None }
+        Response {
+            status,
+            content_type: "application/json".into(),
+            cache: NO_STORE,
+            body: v.to_string().into_bytes(),
+            csp: None,
+        }
     }
 
     /// A serializable value as JSON, 200.
     pub fn json_of<T: serde::Serialize>(v: &T) -> Response {
         match serde_json::to_vec(v) {
-            Ok(body) => Response { status: 200, content_type: "application/json".into(), cache: NO_STORE, body, csp: None },
+            Ok(body) => {
+                Response { status: 200, content_type: "application/json".into(), cache: NO_STORE, body, csp: None }
+            }
             Err(e) => Response::error(500, format!("encoding the answer: {e}")),
         }
     }
@@ -321,7 +330,10 @@ impl Server {
             if meta.file_type().is_socket() {
                 std::fs::remove_file(path)?;
             } else {
-                return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("{} exists and is not a socket", path.display())));
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("{} exists and is not a socket", path.display()),
+                ));
             }
         }
         let listener = std::os::unix::net::UnixListener::bind(path)?;
@@ -454,7 +466,8 @@ fn spawn_conn<C: Conn>(
         let _ = respond(&mut stream, &Response::text(503, "too many connections\n"), false, false);
         return;
     }
-    let (handler, done, stop, allow_tailnet) = (Arc::clone(handler), Arc::clone(active), Arc::clone(stop), config.allow_tailnet);
+    let (handler, done, stop, allow_tailnet) =
+        (Arc::clone(handler), Arc::clone(active), Arc::clone(stop), config.allow_tailnet);
     let spawned = std::thread::Builder::new().name(format!("{}-conn", config.name)).spawn(move || {
         let _ = handle(stream, peer_ok, allow_tailnet, handler.as_ref(), &stop);
         done.fetch_sub(1, Ordering::AcqRel);
@@ -565,7 +578,13 @@ fn read_request<R: Read>(r: &mut BufReader<R>) -> io::Result<Option<Request>> {
     Ok(Some(Request { method, path, query, keep_alive, host, origin, content_type, body }))
 }
 
-fn handle<C: Conn>(stream: C, peer_ok: bool, allow_tailnet: bool, handler: &dyn Handler, stop: &AtomicBool) -> io::Result<()> {
+fn handle<C: Conn>(
+    stream: C,
+    peer_ok: bool,
+    allow_tailnet: bool,
+    handler: &dyn Handler,
+    stop: &AtomicBool,
+) -> io::Result<()> {
     stream.set_timeouts(Some(IDLE), Some(Duration::from_secs(30)))?;
     let mut out = stream;
     if !peer_ok {
@@ -658,7 +677,9 @@ mod tests {
         for ok in ["127.0.0.1", "127.3.2.1", "::1", "::ffff:127.0.0.1"] {
             assert!(address_allowed(ok.parse().unwrap(), false), "{ok}");
         }
-        for tail in ["100.64.0.1", "100.96.0.7", "100.127.255.254", "fd7a:115c:a1e0::7", "::ffff:100.96.0.7"] {
+        for tail in
+            ["100.64.0.1", "100.96.0.7", "100.127.255.254", "fd7a:115c:a1e0::7", "::ffff:100.96.0.7"]
+        {
             assert!(!address_allowed(tail.parse().unwrap(), false), "{tail} without the flag");
             assert!(address_allowed(tail.parse().unwrap(), true), "{tail} with the flag");
         }
@@ -683,11 +704,23 @@ mod tests {
         for ok in ["localhost", "localhost:8740", "127.0.0.1:8740", "127.0.0.1:9000", "[::1]:8740", "LOCALHOST:1"] {
             assert!(host_allowed(ok, false), "{ok}");
         }
-        for tail in ["laptop:8642", "viewer.tail0000.ts.net:8642", "100.64.0.1:8642", "[fd7a:115c:a1e0::1]:8642"] {
+        for tail in [
+            "laptop:8642",
+            "viewer.tail0000.ts.net:8642",
+            "100.64.0.1:8642",
+            "[fd7a:115c:a1e0::1]:8642",
+        ] {
             assert!(!host_allowed(tail, false), "{tail} without the flag");
             assert!(host_allowed(tail, true), "{tail} with the flag");
         }
-        for no in ["evil.example.com", "evil.example.com:8740", "", "192.168.1.4:8740", "localhost.evil.com", "127.0.0.1.nip.io:8740"] {
+        for no in [
+            "evil.example.com",
+            "evil.example.com:8740",
+            "",
+            "192.168.1.4:8740",
+            "localhost.evil.com",
+            "127.0.0.1.nip.io:8740",
+        ] {
             assert!(!host_allowed(no, true), "{no}");
         }
     }

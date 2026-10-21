@@ -57,7 +57,13 @@ pub fn share(budget: usize, needs: &[usize]) -> Vec<usize> {
 pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks {
     let total = marks.len() as u64;
     if marks.len() <= share {
-        return LayerMarks { version: 0, total, shown: total, clustered: false, marks: marks.into_iter().cloned().collect() };
+        return LayerMarks {
+            version: 0,
+            total,
+            shown: total,
+            clustered: false,
+            marks: marks.into_iter().cloned().collect(),
+        };
     }
     if share == 0 {
         return LayerMarks { version: 0, total, shown: 0, clustered: false, marks: Vec::new() };
@@ -71,11 +77,8 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
         }
     });
     // Fixed shapes get their part of the share by count, the largest first.
-    let fixed_share = if movable.is_empty() {
-        share
-    } else {
-        ((share as f64) * fixed.len() as f64 / total as f64).floor() as usize
-    };
+    let fixed_share =
+        if movable.is_empty() { share } else { ((share as f64) * fixed.len() as f64 / total as f64).floor() as usize };
     let mut fixed = fixed;
     let mut out_marks: Vec<Mark> = Vec::new();
     let mut shown = 0u64;

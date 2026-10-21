@@ -188,11 +188,7 @@ impl SceneWriter {
     }
 
     pub fn finish(self, t: Tick, period_x: f64) -> Scene {
-        Scene {
-            t,
-            period_x,
-            layers: self.layers.into_iter().map(|(k, v)| (k, LayerRows::from_marks(v))).collect(),
-        }
+        Scene { t, period_x, layers: self.layers.into_iter().map(|(k, v)| (k, LayerRows::from_marks(v))).collect() }
     }
 }
 

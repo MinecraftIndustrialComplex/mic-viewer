@@ -35,7 +35,9 @@ fn main() {
             "--seed" => seed = val("--seed").parse().unwrap_or_else(|_| die("--seed: a number")),
             "--still" => running = false,
             "--villages" => size.villages = val("--villages").parse().unwrap_or_else(|_| die("--villages: a number")),
-            "--districts" => size.districts = val("--districts").parse().unwrap_or_else(|_| die("--districts: a number")),
+            "--districts" => {
+                size.districts = val("--districts").parse().unwrap_or_else(|_| die("--districts: a number"))
+            }
             "--caravans" => size.caravans = val("--caravans").parse().unwrap_or_else(|_| die("--caravans: a number")),
             "-h" | "--help" => {
                 println!("{usage}");

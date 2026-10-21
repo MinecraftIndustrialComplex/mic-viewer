@@ -59,7 +59,8 @@ impl Backend for Tiny {
 }
 
 fn start() -> (Server, Arc<Tiny>) {
-    let tiny = Arc::new(Tiny { scene: std::sync::RwLock::new(Arc::new(tiny_scene(100_000, 10))), changes: Changes::new() });
+    let tiny =
+        Arc::new(Tiny { scene: std::sync::RwLock::new(Arc::new(tiny_scene(100_000, 10))), changes: Changes::new() });
     let app = Arc::new(App::new(Arc::clone(&tiny)));
     let server = Server::start("127.0.0.1:0".parse().unwrap(), Config::default(), app).unwrap();
     (server, tiny)
@@ -82,7 +83,9 @@ fn ask(addr: SocketAddr, method: &str, path: &str, host: &str) -> (u16, String, 
 fn a_forged_host_is_refused_on_every_route() {
     let (mut server, _) = start();
     let addr = server.addr().unwrap();
-    for path in ["/", "/api/world", "/api/layers", "/map.js", "/api/marks?frame=f&x0=0&z0=0&x1=1&z1=1&bpp=1&layers=dots"] {
+    for path in
+        ["/", "/api/world", "/api/layers", "/map.js", "/api/marks?frame=f&x0=0&z0=0&x1=1&z1=1&bpp=1&layers=dots"]
+    {
         let (st, _, body) = ask(addr, "GET", path, "evil.example.com");
         assert_eq!(st, 403, "{path}");
         assert!(String::from_utf8_lossy(&body).contains("not a local name"));
@@ -117,12 +120,17 @@ fn only_gets_and_the_page_carries_its_policy() {
 
 #[test]
 fn a_public_address_is_refused_at_start() {
-    let app = Arc::new(App::new(Arc::new(Tiny { scene: std::sync::RwLock::new(Arc::new(tiny_scene(1, 0))), changes: Changes::new() })));
+    let app = Arc::new(App::new(Arc::new(Tiny {
+        scene: std::sync::RwLock::new(Arc::new(tiny_scene(1, 0))),
+        changes: Changes::new(),
+    })));
     for bind in ["0.0.0.0:0", "[::]:0", "192.168.1.2:0", "100.100.1.1:0"] {
         let err = Server::start(bind.parse().unwrap(), Config::default(), app.clone()).err().expect(bind);
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{bind}");
     }
-    let err = Server::start("0.0.0.0:0".parse().unwrap(), Config { allow_tailnet: true, ..Config::default() }, app).err().unwrap();
+    let err = Server::start("0.0.0.0:0".parse().unwrap(), Config { allow_tailnet: true, ..Config::default() }, app)
+        .err()
+        .unwrap();
     assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
 }
 
@@ -131,7 +139,12 @@ fn marks_stay_within_the_budget_and_cards_answer() {
     let (mut server, _) = start();
     let addr = server.addr().unwrap();
     // The whole tiny world (100,000 dots) at 1 block a pixel.
-    let (st, _, body) = ask(addr, "GET", "/api/marks?frame=f&x0=-10&z0=-10&x1=1010&z1=110&bpp=1&layers=dots,one,far,unknown", "localhost");
+    let (st, _, body) = ask(
+        addr,
+        "GET",
+        "/api/marks?frame=f&x0=-10&z0=-10&x1=1010&z1=110&bpp=1&layers=dots,one,far,unknown",
+        "localhost",
+    );
     assert_eq!(st, 200);
     let a: MarksAnswer = serde_json::from_slice(&body).unwrap();
     let total: usize = a.layers.values().map(|l| l.marks.len()).sum();
