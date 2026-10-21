@@ -181,6 +181,8 @@ def desktop(s, base):
     s.check(ink["ink"] > 0.3, "the canvas has more than background on it", ink)
     counts = b.eval("[...document.querySelectorAll('#side .lrow.on .lcount')].map(e => e.textContent).filter(Boolean).length")
     s.check(counts >= 5, "the panel shows counts for the layers on", counts)
+    key = b.wait_for("(() => { const k = document.getElementById('key'); const n = k.hidden ? 0 : k.querySelectorAll('li').length; return n || null; })()", timeout=5)
+    s.check((key or 0) >= 5, "the map key names the symbols on screen", key)
     s.shot("desktop-dark.png")
 
     # The theme toggle (a real click).

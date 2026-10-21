@@ -192,7 +192,7 @@ button, select, input { font: inherit; color: inherit; }
 }
 .world-name {
   font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  min-width: 0; flex: 0 1 auto;
+  min-width: 0; max-width: 240px; flex: 0 0 auto;
 }
 .world-name:empty { display: none; }
 .source {
@@ -227,6 +227,10 @@ button, select, input { font: inherit; color: inherit; }
 .past-time { font-weight: 600; }
 .btn-now { height: 22px; border-color: transparent; background: transparent; color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .btn-now:hover { background: var(--bg-1); }
+/* On a desk the past box says when; the source's clock would only repeat now. */
+@media (min-width: 760px) {
+  .top:has(.past:not([hidden])) .source { display: none; }
+}
 
 /* The search box */
 .find { position: relative; flex: 0 1 260px; min-width: 120px; }
@@ -306,7 +310,9 @@ button, select, input { font: inherit; color: inherit; }
 .lmore:hover { background: var(--bg-3); color: var(--fg); }
 .lmore .icon { width: 14px; height: 14px; transition: transform 0.12s; }
 .lmore[aria-expanded="true"] .icon { transform: rotate(90deg); }
-.ldetail { grid-column: 1 / -1; padding: 2px 10px 8px 38px; font-size: 12px; color: var(--fg-2); }
+/* The detail lines up with the row: legend swatches under the layer's swatch, text under its name. */
+.ldetail { grid-column: 1 / -1; padding: 2px 10px 8px 30px; font-size: 12px; color: var(--fg-2); }
+.ldetail > p { padding-left: 30px; }
 .ldetail p + p, .ldetail p + .legend, .ldetail .legend + p { margin-top: 6px; }
 .ldetail .zoomnote { color: var(--fg-3); }
 .legend { display: grid; gap: 2px; }
@@ -536,10 +542,13 @@ button, select, input { font: inherit; color: inherit; }
   .src-fresh { display: none; }
   .tl-body { grid-template-columns: minmax(0, 1fr) 300px; }
   .find { flex-basis: 200px; }
+  .select { max-width: 140px; }
 }
 @media (max-width: 900px) {
   .tbtn-label { display: none; }
   .tbtn { width: 28px; padding: 0; }
+  .world-name { max-width: 160px; flex-shrink: 1; }
+  .top { gap: 10px; }
 }
 
 /* ---------------------------------------------------------------------------------------------- */
