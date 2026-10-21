@@ -137,13 +137,22 @@ pub struct Thing {
     pub net: Option<Net>,
     /// RPM as saved (signed).
     pub speed: f32,
+    /// Whether it works now, where the save says: turning for a kinetic block, lit for a furnace.
+    /// None for a block with no such state (a spout, a blaze heater).
+    pub active: Option<bool>,
     pub detail: Detail,
 }
 
 impl Thing {
-    /// Turning: a speed and a network that is not overstressed.
+    /// Working: turning on a network that is not overstressed, or lit. A block the save gives no
+    /// such state counts as working.
     pub fn running(&self) -> bool {
-        self.speed.abs() > 0.0 && !self.net.is_some_and(|n| n.overstressed())
+        self.active != Some(false) && !self.net.is_some_and(|n| n.overstressed())
+    }
+
+    /// Whether the save says it is not working (a stopped kinetic block, an unlit furnace).
+    pub fn idle(&self) -> bool {
+        !self.running() && (self.active.is_some() || self.net.is_some())
     }
 
     /// Words for what it is ("Mechanical press", "Steam engine").
@@ -295,6 +304,8 @@ pub fn thing(be: &Tag) -> Option<Thing> {
     let net = read_net(be);
     let kind = classify(&id, net.as_ref());
     let speed = f(be, "Speed").unwrap_or(0.0) as f32;
+    // Kinetic block entities always save their speed; furnaces (1.21.1) their burn time.
+    let active = if be.get("Speed").is_some() { Some(speed.abs() > 0.0) } else { f(be, "BurnTime").map(|t| t > 0.0) };
     let detail = match kind {
         Kind::Belt => Detail::Belt {
             controller: be.get("Controller").and_then(tags::pos3).unwrap_or(pos),
@@ -393,7 +404,7 @@ pub fn thing(be: &Tag) -> Option<Thing> {
         }
         _ => Detail::None,
     };
-    Some(Thing { pos, id, kind, net, speed, detail })
+    Some(Thing { pos, id, kind, net, speed, active, detail })
 }
 
 /// The region folder of a dimension.
@@ -1087,5 +1098,19 @@ mod tests {
         assert!(calls.load(Ordering::Acquire) >= 1);
         drop(sv);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_furnace_works_when_lit_and_a_spout_has_no_state() {
+        let lit = thing(&be("minecraft:furnace", [0, 0, 0], vec![("BurnTime", Tag::Int(120))])).unwrap();
+        assert_eq!(lit.active, Some(true));
+        assert!(lit.running() && !lit.idle());
+        let cold = thing(&be("minecraft:furnace", [1, 0, 0], vec![("BurnTime", Tag::Int(0))])).unwrap();
+        assert!(!cold.running() && cold.idle());
+        let spout = thing(&be("create:spout", [2, 0, 0], vec![])).unwrap();
+        assert_eq!(spout.active, None);
+        assert!(spout.running() && !spout.idle());
+        let still = thing(&be("create:mechanical_press", [3, 0, 0], vec![("Speed", Tag::Float(0.0))])).unwrap();
+        assert!(still.idle());
     }
 }

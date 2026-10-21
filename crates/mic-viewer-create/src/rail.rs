@@ -428,12 +428,51 @@ impl Train {
     }
 
     /// Blocks from the first bogey to the last.
+    /// From the leading carriage's front to the last one's back, along the carriages and the gaps
+    /// between them.
     pub fn length(&self) -> f64 {
-        self.cars.iter().map(|c| ((c[2] - c[0]).powi(2) + (c[3] - c[1]).powi(2)).sqrt()).sum()
+        let d = |a: [f64; 2], b: [f64; 2]| ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+        let cars: f64 = self.cars.iter().map(|c| d([c[0], c[1]], [c[2], c[3]])).sum();
+        let gaps: f64 = self.cars.windows(2).map(|w| d([w[0][2], w[0][3]], [w[1][0], w[1][1]])).sum();
+        cars + gaps
     }
 
     pub fn moving(&self) -> bool {
         self.speed.abs() > 1e-4
+    }
+}
+
+/// A carriage on one bogey is saved as that bogey's two wheel points, two blocks apart, however long
+/// its body. When every carriage rides on one bogey, stretch each to its share of the train:
+/// consecutive bogeys stand `CarriageSpacing` apart, and each gap is split between the two
+/// carriages with a block of coupling between them. The end carriages reach as far outward as
+/// inward, no further than their contraption's extent.
+fn stretch_single_bogey(cars: &mut [[f64; 4]], single: &[bool], extent: &[Option<f64>], pitch: &[f64]) {
+    let n = cars.len();
+    if n == 0 || single.iter().any(|s| !s) || pitch.len() + 1 != n {
+        return;
+    }
+    let half = |k: usize| (pitch[k] - 1.0).max(2.0) / 2.0;
+    for k in 0..n {
+        // Toward the carriage ahead (the first point's side), and toward the one behind.
+        let ahead = if k > 0 { Some(half(k - 1)) } else { None };
+        let behind = if k + 1 < n { Some(half(k)) } else { None };
+        let cap = extent[k].map_or(f64::INFINITY, |e| e / 2.0);
+        let (ahead, behind) = match (ahead, behind) {
+            (Some(a), Some(b)) => (a, b),
+            (Some(a), None) => (a, a.min(cap)),
+            (None, Some(b)) => (b.min(cap), b),
+            (None, None) => continue,
+        };
+        let c = cars[k];
+        let (dx, dz) = (c[0] - c[2], c[1] - c[3]);
+        let d = (dx * dx + dz * dz).sqrt();
+        if d < 1e-6 {
+            continue;
+        }
+        let (ux, uz) = (dx / d, dz / d);
+        let (mx, mz) = ((c[0] + c[2]) / 2.0, (c[1] + c[3]) / 2.0);
+        cars[k] = [mx + ux * ahead, mz + uz * ahead, mx - ux * behind, mz - uz * behind];
     }
 }
 
@@ -758,8 +797,23 @@ impl Rail {
         let mut items = BTreeMap::new();
         let mut fluids = BTreeMap::new();
         let mut dim = None;
+        // Per carriage: whether it rides on one bogey, and its contraption's extent along the track
+        // where the save gives it.
+        let mut single = Vec::new();
+        let mut extent = Vec::new();
         for c in t.get("Carriages").map(Tag::items).unwrap_or_default() {
             let first = c.get("FirstBogey");
+            single.push(c.get("SecondBogey").and_then(|b| b.get("Points")).is_none());
+            let bounds = c
+                .get("Entity")
+                .and_then(|e| e.get("Contraption"))
+                .and_then(|k| k.get("BoundsFront"))
+                .map(Tag::items)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(tags::num)
+                .collect::<Vec<_>>();
+            extent.push((bounds.len() == 6).then(|| (bounds[3] - bounds[0]).min(bounds[5] - bounds[2])));
             let last = c.get("SecondBogey").filter(|b| b.get("Points").is_some()).or(first);
             let front =
                 first.and_then(|b| b.get("Points")).and_then(|p| p.items().first()).and_then(|p| self.travelling(p));
@@ -795,6 +849,11 @@ impl Rail {
                     }
                 }
             }
+        }
+        if cars.len() == single.len() {
+            let pitch: Vec<f64> =
+                t.get("CarriageSpacing").and_then(tags::ints).unwrap_or_default().into_iter().map(f64::from).collect();
+            stretch_single_bogey(&mut cars, &single, &extent, &pitch);
         }
         if speed < 0.0 {
             cars.reverse();
@@ -890,6 +949,27 @@ mod tests {
 
     fn close(a: V3, b: V3) -> bool {
         len(sub(a, b)) < 1e-6
+    }
+
+    #[test]
+    fn single_bogey_carriages_stretch_to_their_bodies() {
+        // A train of six carriages on one bogey each, bogeys 5, 7, 11, 7, 5 apart along z,
+        // the train's front toward -z (each carriage's first point is its lower z).
+        let starts = [35.5, 40.5, 47.5, 58.5, 65.5, 70.5];
+        let mut cars: Vec<[f64; 4]> = starts.iter().map(|z| [24.5, *z, 24.5, z + 2.0]).collect();
+        let extent = [Some(7.0), Some(5.0), Some(11.0), Some(5.0), Some(5.0), Some(3.0)];
+        stretch_single_bogey(&mut cars, &[true; 6], &extent, &[5.0, 7.0, 11.0, 7.0, 5.0]);
+        let lens: Vec<f64> = cars.iter().map(|c| c[3] - c[1]).collect();
+        assert_eq!(lens, [4.0, 5.0, 8.0, 8.0, 5.0, 3.5]);
+        // A block of coupling between each pair.
+        for w in cars.windows(2) {
+            assert!((w[1][1] - w[0][3] - 1.0).abs() < 1e-9, "{w:?}");
+        }
+        // A train with a carriage on two bogeys keeps its points.
+        let mut two = vec![[0.0, 0.0, 0.0, 6.0], [0.0, 8.0, 0.0, 10.0]];
+        let before = two.clone();
+        stretch_single_bogey(&mut two, &[false, true], &[None, None], &[8.0]);
+        assert_eq!(two, before);
     }
 
     #[test]

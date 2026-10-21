@@ -29,7 +29,8 @@ pub const RAIL_LAYERS: [&str; 4] = [TRACK, STATIONS, SIGNALS, TRAINS];
 pub const BLOCK_LAYERS: [&str; 6] = [MACHINES, GAUGES, STORAGE, CHAINS, BELTS, PORTS];
 
 /// Networks by length, longest first; the rest grey.
-pub const NETWORK_COLORS: [&str; 7] = ["#2f6db5", "#2e8b57", "#8250c4", "#c2477a", "#b4572e", "#6b8e23", "#4b5bd0"];
+/// Network colours, none of them green: green is the districts' and the signals'.
+pub const NETWORK_COLORS: [&str; 6] = ["#2f6db5", "#c2477a", "#8250c4", "#b4572e", "#4b5bd0", "#9a7b0a"];
 pub const SMALL_NETWORK: &str = "#8b949e";
 pub const BAD: &str = "#d1242f";
 pub const WARN: &str = "#c08a1e";
@@ -755,11 +756,21 @@ fn net_fields(c: Card, n: Option<&Net>, speed: f32) -> Card {
         if n.overstressed() {
             c = c.field("State", "overstressed: everything on this network stands still");
         }
+        // Create saves what a block takes or gives per RPM; the network counts it at the speed.
+        let rpm = f64::from(speed.abs());
         if n.adds_stress > 0.0 {
-            c = c.field_unit("Takes", f64::from(n.adds_stress), "su");
+            c = if rpm > 0.0 {
+                c.field_unit("Takes", (f64::from(n.adds_stress) * rpm).round(), "su")
+            } else {
+                c.field_unit("Takes", f64::from(n.adds_stress), "su per RPM")
+            };
         }
         if n.adds_capacity > 0.0 {
-            c = c.field_unit("Gives", f64::from(n.adds_capacity), "su");
+            c = if rpm > 0.0 {
+                c.field_unit("Gives", (f64::from(n.adds_capacity) * rpm).round(), "su")
+            } else {
+                c.field_unit("Gives", f64::from(n.adds_capacity), "su per RPM")
+            };
         }
     }
     c
@@ -886,27 +897,34 @@ pub fn census_sections(things: &[Thing]) -> Vec<Section> {
     if !makes.fields.is_empty() {
         out.push(makes);
     }
-    let mut machines: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+    // Per kind: how many, how many idle (stopped, or an unlit furnace), how many overstressed, and
+    // the word for idle.
+    let mut machines: BTreeMap<String, (usize, usize, usize, &str)> = BTreeMap::new();
     for t in things.iter().filter(|t| matches!(t.kind, Kind::Machine | Kind::Mover)) {
-        let e = machines.entry(t.name()).or_default();
+        let word = if t.net.is_none() && t.speed == 0.0 && t.active.is_some() && !t.id.contains("motor") {
+            if t.id.contains("furnace") || t.id.contains("smoker") { "unlit" } else { "stopped" }
+        } else {
+            "stopped"
+        };
+        let e = machines.entry(t.name()).or_insert((0, 0, 0, word));
         e.0 += 1;
-        if t.running() {
-            e.1 += 1;
-        }
         if t.net.is_some_and(|n| n.overstressed()) {
             e.2 += 1;
+        } else if t.idle() {
+            e.1 += 1;
         }
     }
     if !machines.is_empty() {
         let mut sec = Section::new("Machines");
         let mut v: Vec<_> = machines.into_iter().collect();
         v.sort_by_key(|e| std::cmp::Reverse(e.1.0));
-        for (name, (n, run, over)) in v.into_iter().take(20) {
+        for (name, (n, idle, over, word)) in v.into_iter().take(20) {
             let mut s = format!("{n}");
             if over > 0 {
                 s.push_str(&format!(", {over} overstressed"));
-            } else if run < n {
-                s.push_str(&format!(", {} stopped", n - run));
+            }
+            if idle > 0 {
+                s.push_str(&format!(", {idle} {word}"));
             }
             sec = sec.field(&name, s);
         }
@@ -927,16 +945,24 @@ pub fn census_sections(things: &[Thing]) -> Vec<Section> {
         for (name, n) in &power {
             sec = sec.field(name, *n);
         }
-        let mut v: Vec<_> = nets.values().filter(|n| n.capacity > 0.0 || n.stress > 0.0).collect();
-        v.sort_by(|a, b| b.stress.total_cmp(&a.stress));
-        for (k, n) in v.iter().take(6).enumerate() {
-            let mut s = format!("{} of {} su", fmt_int(n.stress.round() as i64), fmt_int(n.capacity.round() as i64));
-            if n.overstressed() {
-                s.push_str(", overstressed: stands still");
+        // One line for the stress, not one a network: what is used of what is given, and how many
+        // networks stand still for want of it.
+        let v: Vec<_> = nets.values().filter(|n| n.capacity > 0.0 || n.stress > 0.0).collect();
+        if !v.is_empty() {
+            let (used, given) = v.iter().fold((0.0, 0.0), |(u, g), n| (u + n.stress, g + n.capacity));
+            let nets = if v.len() == 1 { "1 network".to_owned() } else { format!("{} networks", v.len()) };
+            sec = sec.field(
+                "Stress used",
+                format!("{} of {} su, {nets}", fmt_int(used.round() as i64), fmt_int(given.round() as i64)),
+            );
+            let over = v.iter().filter(|n| n.overstressed()).count();
+            if over > 0 {
+                sec = sec.field("Overstressed, standing still", format!("{over} of {}", v.len()));
             }
-            sec = sec.field(&format!("Kinetic network {}", k + 1), s);
         }
-        out.push(sec);
+        if !sec.fields.is_empty() {
+            out.push(sec);
+        }
     }
     let mut items: BTreeMap<String, i64> = BTreeMap::new();
     let mut fluids: BTreeMap<String, i64> = BTreeMap::new();
