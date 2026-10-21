@@ -1,0 +1,19 @@
+# Rust build output
+/target/
+
+# Scratch output of the browser checks (tools/smoke.py --out); committed screenshots live in
+# docs/screenshots/.
+/build/
+
+# Editor and tooling state
+.direnv/
+.idea/
+.vscode/
+.graphide/
+
+# Claude Code agent worktrees and settings (never part of the project)
+/.claude/
+
+# Python bytecode
+__pycache__/
+*.pyc

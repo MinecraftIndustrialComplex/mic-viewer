@@ -1,0 +1,19 @@
+[package]
+name = "mic-viewer"
+description = "The shared world viewer of mic-rtsim and Deep Time: a loopback HTTP server, server-sent events, a tile cache, the viewer API and its page"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MPL-2.0"
+publish = false
+repository = "https://github.com/MinecraftIndustrialComplex/mic-viewer"
+# Self-contained (no workspace inheritance) so a consumer can vendor this folder alone
+# (docs/choices-viewer.md VC3).
+
+[dependencies]
+# The versions Deep Time and mic-rtsim already pin, so a consumer's lock gains nothing new.
+# MIT OR Apache-2.0.
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+# Tile images. MIT OR Apache-2.0.
+png = "0.18.1"

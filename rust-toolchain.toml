@@ -1,0 +1,6 @@
+# rustup reads this outside Nix. The Nix dev shell pins the same channel through rust-overlay
+# (flake.nix `rustChannel`), and `nix flake check` fails if the two differ.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy", "rust-src"]
+profile = "minimal"
