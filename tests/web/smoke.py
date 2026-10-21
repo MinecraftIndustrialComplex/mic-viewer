@@ -9,8 +9,10 @@ Checks: no console errors, exceptions or CSP violations, and only GETs; the map 
 marks; the layer panel lists the demo's 14 layers; clicking a village opens its card; the theme
 toggle switches; the timeline opens, scrubs into the past and back; the `demo:ring` frame draws
 across its seam; at 390 x 844 there is no horizontal scroll, the panels open as sheets inside the
-screen, and touch pan and pinch move the map. Exits 0 only when every check passes. Stops only the
-demo server and the browser it started.
+screen, and touch pan and pinch move the map; on a second, stepped demo (`--stepped`), stream
+`frame` messages move the clock and refetch the marks that moved, and live event rows reach the frame
+they belong to. Exits 0 only when every check passes. Stops only the demo servers and the browser it
+started.
 """
 
 import argparse
@@ -139,13 +141,13 @@ def get_json(base, path):
         return json.load(r)
 
 
-def start_demo(build):
+def start_demo(build, clock=("--still",)):
     if build:
         print("building the demo (cargo build --release -p mic-viewer-demo)")
         subprocess.run(["nice", "-n", "10", "cargo", "build", "--release", "-p", "mic-viewer-demo"], cwd=ROOT, check=True)
     port = shot.free_port()
     exe = os.path.join(ROOT, "target", "release", "mic-viewer-demo")
-    proc = subprocess.Popen([exe, "--still", "--port", str(port)], cwd=ROOT,
+    proc = subprocess.Popen([exe, *clock, "--port", str(port)], cwd=ROOT,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     base = f"http://127.0.0.1:{port}/"
     for _ in range(100):
@@ -302,6 +304,40 @@ def desktop(s, base):
     s.check(b.eval("document.getElementById('frame').value === 'demo:ring'"), "the frame switcher shows the ring")
 
 
+CARAVAN_VERSION = "(MicViewer.app.state.marks.layers['travel.caravans'] || {}).version"
+
+
+def live(s):
+    """On a stepped demo: the stream's `frame` messages and live event rows. A live world animates its
+    caravans every frame, so the page is never idle here: wait for it to be loaded instead."""
+    b = s.b
+    print("live updates, a stepped demo (2000 ticks every 0.7 s)")
+    b.size(1440, 900)
+    loaded = "!!(window.MicViewer && MicViewer.app && MicViewer.app.ready && MicViewer.app.state.pending === 0)"
+
+    def open_live(hash_):
+        b.navigate("about:blank")
+        b.wait_for("location.href === 'about:blank'", timeout=5)
+        b.navigate(s.base + hash_)
+        time.sleep(0.3)
+        return bool(b.wait_for(loaded, timeout=30))
+
+    s.check(open_live("#frame=minecraft:overworld&x=0&z=0&bpp=12"), "the page starts on a stepped demo")
+    st0 = b.eval(f"({{ heard: MicViewer.app.state.heard, tick: MicViewer.app.state.time.tick, v: {CARAVAN_VERSION} }})")
+    s.check(st0["v"] is not None, "the caravans are shown", st0)
+    f0 = st0["heard"]["frames"]
+    ok = b.wait_for(f"MicViewer.app.state.heard.frames >= {f0 + 3} && MicViewer.app.state.heard.rows > 0", timeout=20)
+    st = b.eval(f"({{ heard: MicViewer.app.state.heard, tick: MicViewer.app.state.time.tick, v: {CARAVAN_VERSION} }})")
+    s.check(bool(ok) and st["tick"] > st0["tick"], "stream frame messages move the clock and live rows arrive", [st0, st])
+    ok = b.wait_for(f"{CARAVAN_VERSION} != null && {CARAVAN_VERSION} !== {json.dumps(st0['v'])}", timeout=10)
+    s.check(bool(ok), "a frame message refetches the caravans that moved", [st0["v"], b.eval(CARAVAN_VERSION)])
+    drawn = b.eval("MicViewer.app.lastDraw ? MicViewer.app.lastDraw.drawn : 0")
+    s.check(drawn > 0 and b.wait_for(loaded, timeout=10), "the map keeps drawing and its requests finish between publishes", drawn)
+    s.check(open_live("#frame=demo:ring&x=0&z=0&bpp=4"), "the ring frame opens on the stepped demo")
+    ok = b.wait_for("MicViewer.app.state.heard.rows > 0", timeout=30)
+    s.check(bool(ok), "the ring frame takes its own live rows", b.eval("MicViewer.app.state.heard"))
+
+
 def phone(s):
     b = s.b
     print("phone, 390 x 844")
@@ -360,7 +396,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(ROOT, "docs", "screenshots"))
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
-    proc = None
+    proc = live_proc = None
     if a.url:
         base = a.url if a.url.endswith("/") else a.url + "/"
     else:
@@ -374,6 +410,10 @@ def main():
             b.call("Page.addScriptToEvaluateOnNewDocument", source=RECORDER)
             desktop(s, base)
             phone(s)
+            if not a.url:
+                live_proc, s.base = start_demo(False, ("--stepped", "2000", "--every", "700"))
+                live(s)
+                s.base = base
             s.collect_csp_safe()
             b.eval("1")
             errors, methods = [], set()
@@ -393,12 +433,13 @@ def main():
             s.check(not s.csp, "no CSP violations", s.csp[:8])
             s.check(methods <= {"GET"}, "the page sends only GETs", sorted(m for m in methods if m))
     finally:
-        if proc:
-            proc.terminate()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        for p in (proc, live_proc):
+            if p:
+                p.terminate()
+                try:
+                    p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    p.kill()
     print(f"\n{s.passed} passed, {len(s.failures)} failed")
     for f in s.failures:
         print(f"  - {f}")

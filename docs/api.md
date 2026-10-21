@@ -60,6 +60,9 @@ Query numbers are decimal; `layers` and `kinds` are comma-separated ids. A missi
   supplied by a plug-in script: `{"kind": "plugin", "script": "plugins/deeptime/projection.js",
   "factory": "...", "args": {...}}`, for Deep Time worlds). `z_range` is `[zmin, zmax]` or null.
 - `bounds` `[x0, z0, x1, z1]`: where the frame has content; "home" fits it.
+- `tiles`: the frame's base maps. Optional on each: `default_on` (shown when the viewer has saved no
+  choice; without it the page shows the first base map and every overlay) and `alpha` (opacity 0 to
+  1; without it opaque).
 - `time.running`: whether ticks advance (live, host); the page then extrapolates `tick` at `tps`.
 
 ### 2.1 Projections in the page
@@ -181,7 +184,8 @@ A layer with more marks in view than its share is binned on a 32 px screen grid 
 ```json
 {
   "rows": [ { "t": 280000, "kind": "conflict.raid", "sev": 2, "x": 1100, "z": -400,
-              "subject": "88", "object": "17", "mag": 12, "text": "Goblins raid North Smelter" } ],
+              "subject": "88", "object": "17", "mag": 12, "text": "Goblins raid North Smelter",
+              "frame": "minecraft:overworld" } ],
   "legs": [ { "t0": 279000, "t1": 281000, "kind": "conflict.party", "subject": "88",
               "p": [[900, -600, 1100, -400]] } ],
   "truncated": false
@@ -196,6 +200,9 @@ A layer with more marks in view than its share is binned on a 32 px screen grid 
   "wall": [[0, 1792000000000], [288000, 1792560000000]] }
 ```
 
+A row's `frame` is optional: without it the row is the world's first frame's. `/api/events?frame=`
+answers that frame's rows.
+
 `wall` pairs ticks with wall-clock milliseconds (the page writes dates under game days). Kinds are
 described once in `/api/world` `event_kinds`.
 
@@ -208,7 +215,8 @@ Server-sent events, `retry: 2000`, a comment every 15 s:
   "frames": {"<frame>": {"<layer>": <version>}}}` when a new publication arrives. `frames` holds the
   versions `/api/marks` answers with; the page refetches marks only for layers of its frame whose
   version changed. (`versions` is their xor over the frames.)
-- `events`: `{"rows": [...]}` archive rows newer than the stream's start.
+- `events`: `{"rows": [...]}` archive rows newer than the stream's start, of every frame; the page
+  lists and flashes a row only in its `frame` (no `frame`: the first).
 
 A page hidden for 60 s closes its stream and reopens it when shown (open streams are the live
 source's lease, VIEWER.md §11).

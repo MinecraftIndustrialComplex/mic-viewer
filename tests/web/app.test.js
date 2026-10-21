@@ -138,6 +138,23 @@ test('changedLayers: held layers whose version moved on in this frame', () => {
   assert.deepEqual(MV.changedLayers({ frames: { f: { z: 9 } } }, 'f', held), []);
 });
 
+test('rowsForFrame: stream rows go to their frame, a row without one to the first', () => {
+  const rows = [{ t: 1 }, { t: 2, frame: 'ring' }, { t: 3, frame: 'over' }];
+  assert.deepEqual(MV.rowsForFrame(rows, 'over', 'over').map(r => r.t), [1, 3]);
+  assert.deepEqual(MV.rowsForFrame(rows, 'ring', 'over').map(r => r.t), [2]);
+  assert.deepEqual(MV.rowsForFrame(rows, 'nether', 'over'), []);
+  assert.deepEqual(MV.rowsForFrame(undefined, 'over', 'over'), []);
+});
+
+test('tilesShown: saved choice, then default_on, then the first base map and every overlay', () => {
+  const tiles = [{ id: 'a' }, { id: 'b' }, { id: 'o', overlay: true }, { id: 'p', overlay: true, default_on: false },
+    { id: 'c', default_on: true }];
+  assert.deepEqual(MV.tilesShown(tiles, {}), { a: true, b: false, o: true, p: false, c: true });
+  assert.deepEqual(MV.tilesShown(tiles, { a: false, p: true, c: false }), { a: false, b: false, o: true, p: true, c: false });
+  assert.deepEqual(MV.tilesShown([{ id: 'a', default_on: false }, { id: 'b' }], null), { a: false, b: false });
+  assert.deepEqual(MV.tilesShown(undefined, {}), {});
+});
+
 test('isStale, tickAt, fmtAge', () => {
   assert.equal(MV.isStale(null, 1e9), false);
   assert.equal(MV.isStale({ age_ms: 500 }, 1e9), false);   // no cycle: never stale

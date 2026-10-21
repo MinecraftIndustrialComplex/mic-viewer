@@ -30,6 +30,7 @@ Consumers pin a commit: mic-rtsim's `rtsim-cli view` and `rtsim-cli run`, and De
 ```sh
 nix develop -c cargo run --release -p mic-viewer-demo            # http://127.0.0.1:8740/
 nix develop -c cargo run --release -p mic-viewer-demo -- --still  # a stopped clock
+nix develop -c cargo run --release -p mic-viewer-demo -- --stepped 2000 --every 700  # 2000 ticks a publish, the same every run
 ```
 
 From another machine, forward the port: `ssh -L 8740:127.0.0.1:8740 <host>`, then open

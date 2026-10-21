@@ -107,6 +107,24 @@
     return Object.keys(held || {}).filter(id => fv[id] != null && held[id] && fv[id] !== held[id].version);
   }
 
+  /** The stream `events` rows for the frame shown: a row without a frame is the first frame's. */
+  function rowsForFrame(rows, frame, firstFrame) {
+    return (rows || []).filter(r => (r.frame || firstFrame) === frame);
+  }
+
+  /** Which base maps start shown, by id: the viewer's saved choice, else the layer's `default_on`,
+   *  else the first base map and every overlay. */
+  function tilesShown(tiles, saved) {
+    const on = {};
+    let bases = 0;
+    for (const d of tiles || []) {
+      const s = saved && saved[d.id];
+      on[d.id] = s != null ? !!s : d.default_on != null ? !!d.default_on : !!d.overlay || bases === 0;
+      if (!d.overlay) bases++;
+    }
+    return on;
+  }
+
   /** Whether a source is stale: nothing published for two cycles. */
   function isStale(fresh, sinceMs) {
     if (!fresh || !fresh.cycle_ms) return false;
@@ -191,6 +209,8 @@
       t: null, time: null, timeAt: 0, fresh: null, freshAt: 0,
       card: null, cardData: null, stack: [], cardSeq: 0, selected: null, hovered: null,
       events: [], eventLegs: [], eventHover: null, eventSel: null, flashes: [],
+      // Stream messages taken: `frame` messages, and live event rows for the frame shown.
+      heard: { frames: 0, rows: 0 },
       lastDraw: null, es: null, connected: false, helloSeen: false, hideTimer: 0, hashTimer: 0, ownHash: null,
       flight: 0, cursorW: null, sheet: null,
     };
@@ -988,6 +1008,7 @@
 
     function onFrameMsg(msg) {
       if (!msg) return;
+      A.heard.frames++;
       setTime(msg.time, msg.freshness);
       if (A.t != null) return;                       // the past does not move
       const changed = changedLayers(msg, A.frame, A.marks.layers);
@@ -1000,10 +1021,9 @@
     }
 
     function onLiveEvents(msg) {
-      const rows = (msg && msg.rows) || [];
+      const rows = rowsForFrame(msg && msg.rows, A.frame, A.world.frames[0] && A.world.frames[0].id);
       if (!rows.length) return;
-      // Stream rows carry no frame: they are the archive's, which is the world's first frame.
-      if (A.world.frames.length > 1 && A.frame !== A.world.frames[0].id) return;
+      A.heard.rows += rows.length;
       if (timeline) timeline.addLive(rows);
       if (A.t != null) return;
       const at = now();
@@ -1121,16 +1141,15 @@
         toast(`The projection of ${f.label} did not load: ${e.message}`);
         proj = MV.projectionFor(f);
       }
-      const saved = store.get('tiles') || {};
+      const usable = (f.tiles || []).filter(d => MV.pyramidFor(d));
+      const shown = tilesShown(usable, store.get('tiles') || {});
       const list = [];
-      let base = null, bases = 0;
-      for (const d of f.tiles || []) {
+      let base = null;
+      for (const d of usable) {
         const pyr = MV.pyramidFor(d);
-        if (!pyr) continue;
         if (!base) base = pyr;
-        if (saved[d.id] != null ? saved[d.id] : d.overlay || bases === 0) A.tilesOn.add(d.id);
+        if (shown[d.id]) A.tilesOn.add(d.id);
         else A.tilesOn.delete(d.id);
-        if (!d.overlay) bases++;
         list.push({ id: d.id, url: MV.tileUrl(d.url), alpha: d.alpha != null ? d.alpha : 1, pyramid: pyr, bounds: d.bounds || null, visible: A.tilesOn.has(d.id) });
       }
       A.tileList = list;
@@ -1291,7 +1310,7 @@
     start();
   }
 
-  Object.assign(MV, { parseHash, buildHash, inZoom, zoomHint, viewBox, marksURL, changedLayers, isStale, tickAt, fmtAge });
+  Object.assign(MV, { parseHash, buildHash, inZoom, zoomHint, viewBox, marksURL, changedLayers, rowsForFrame, tilesShown, isStale, tickAt, fmtAge });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 
   if (typeof document !== 'undefined' && document.getElementById) {

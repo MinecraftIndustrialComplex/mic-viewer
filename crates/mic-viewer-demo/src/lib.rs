@@ -4,9 +4,12 @@
 //! terrain base map. Nothing here is a simulation; it is the page's fixture (development,
 //! screenshots, the browser smoke test) and the budget tests' load.
 //!
-//! Deterministic for a seed: with `running = false` the clock stands still, so screenshots repeat.
+//! Deterministic for a seed: with `Clock::Still` the clock stands still, so screenshots repeat; with
+//! `Clock::Stepped` every publish moves it a fixed number of ticks, so the world after n publishes is
+//! the same on every run (the smoke test's live updates).
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -386,9 +389,36 @@ impl World {
                 object: None,
                 mag: 1 + r.below(40) as i64,
                 text,
+                frame: None,
             });
         }
         out
+    }
+
+    /// Synthetic events on the ring frame in `[from, to)`, about ten a day: stream rows of a frame
+    /// other than the first.
+    pub fn ring_history(&self, r: &mut Rng, from: Tick, to: Tick) -> Vec<EventRow> {
+        let mut out = Vec::new();
+        let mut t = from;
+        loop {
+            t += r.range(600.0, 4200.0) as Tick;
+            if t >= to {
+                return out;
+            }
+            let (kind, _, _, _, sev) = KINDS[r.below(KINDS.len())];
+            out.push(EventRow {
+                t,
+                kind: kind.into(),
+                sev,
+                x: r.range(-RING_PERIOD / 2.0, RING_PERIOD / 2.0),
+                z: r.range(-RING_HALF_Z * 0.8, RING_HALF_Z * 0.8),
+                subject: None,
+                object: None,
+                mag: 1,
+                text: "On the ring, near the seam road".into(),
+                frame: Some(RING.into()),
+            });
+        }
     }
 
     /// A caravan's road and trip at time `t`: (road index, forward, t0, t1).
@@ -917,45 +947,83 @@ impl TileSource for Terrain {
 }
 
 /// The demo as a viewer backend.
+/// How the demo's clock moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Clock {
+    /// Stands at START; nothing is published.
+    Still,
+    /// 20 ticks a wall-clock second; published every 2 s.
+    Wall,
+    /// Each publish moves it `ticks`; published every `every_ms`.
+    Stepped { ticks: Tick, every_ms: u64 },
+}
+
+impl Clock {
+    /// Wall-clock milliseconds between publishes, or None when nothing is published.
+    pub fn cycle_ms(self) -> Option<u64> {
+        match self {
+            Clock::Still => None,
+            Clock::Wall => Some(2000),
+            Clock::Stepped { every_ms, .. } => Some(every_ms),
+        }
+    }
+}
+
 pub struct Demo {
     pub world: World,
     pub size: Size,
+    /// The clock moves (not `Clock::Still`).
     pub running: bool,
+    pub clock: Clock,
     started: Instant,
+    publishes: AtomicI64,
     layers: Arc<Layers>,
     tiles: Tiles,
     changes: Changes,
     current: RwLock<(Tick, Arc<Scene>, Arc<Scene>)>,
     live_events: Mutex<Vec<EventRow>>,
-    watchers: std::sync::atomic::AtomicUsize,
+    watchers: AtomicUsize,
 }
 
 impl Demo {
+    /// A demo on the wall clock (`running`) or standing still.
     pub fn new(seed: u64, size: Size, running: bool) -> Demo {
+        Demo::with_clock(seed, size, if running { Clock::Wall } else { Clock::Still })
+    }
+
+    pub fn with_clock(seed: u64, size: Size, clock: Clock) -> Demo {
         let world = World::new(seed, size);
         let s = Arc::new(world.scene(OVERWORLD, START, size.caravans));
         let r = Arc::new(world.scene(RING, START, 0));
         Demo {
             size,
-            running,
+            running: clock != Clock::Still,
+            clock,
             started: Instant::now(),
+            publishes: AtomicI64::new(0),
             layers: Arc::new(layers()),
             tiles: Tiles::new(Arc::new(Terrain { seed }), TileCache::in_memory(64 << 20), true),
             changes: Changes::new(),
             current: RwLock::new((START, s, r)),
             live_events: Mutex::new(Vec::new()),
             world,
-            watchers: std::sync::atomic::AtomicUsize::new(0),
+            watchers: AtomicUsize::new(0),
         }
     }
 
-    /// The game tick now: 20 a second from START when running.
+    /// The game tick now: 20 a second from START on the wall clock; START plus the publishes' steps
+    /// when stepped.
     pub fn now(&self) -> Tick {
-        if self.running { START + (self.started.elapsed().as_millis() as Tick) / 50 } else { START }
+        match self.clock {
+            Clock::Still => START,
+            Clock::Wall => START + (self.started.elapsed().as_millis() as Tick) / 50,
+            Clock::Stepped { ticks, .. } => START + self.publishes.load(Ordering::Acquire) * ticks,
+        }
     }
 
-    /// Publishes a new scene (the host's step tail would): called every couple of seconds.
+    /// Publishes a new scene (the host's step tail would): called every `clock.cycle_ms()`.
     pub fn publish(&self) {
+        self.publishes.fetch_add(1, Ordering::AcqRel);
         let t = self.now();
         let s = Arc::new(self.world.scene(OVERWORLD, t, self.size.caravans));
         let r = Arc::new(self.world.scene(RING, t, 0));
@@ -967,20 +1035,27 @@ impl Demo {
         };
         if t > prev {
             let mut rng = Rng::new(self.world.seed ^ t as u64);
-            let rows = self.world.history(&mut rng, prev, t);
+            let mut rows = self.world.history(&mut rng, prev, t);
+            rows.extend(self.world.ring_history(&mut rng, prev, t));
+            rows.sort_by_key(|e| e.t);
             self.live_events.lock().unwrap_or_else(|e| e.into_inner()).extend(rows);
         }
         self.changes.publish();
     }
 
     pub fn open_streams(&self) -> usize {
-        self.watchers.load(std::sync::atomic::Ordering::Relaxed)
+        self.watchers.load(Ordering::Relaxed)
     }
 
     fn all_events(&self) -> Vec<EventRow> {
         let live = self.live_events.lock().unwrap_or_else(|e| e.into_inner());
         self.world.events.iter().chain(live.iter()).cloned().collect()
     }
+}
+
+/// Whether an event is in the query's frame (no frame on either side: the overworld, the first).
+fn in_frame(e: &EventRow, q: &EventQuery) -> bool {
+    e.frame.as_deref().unwrap_or(OVERWORLD) == q.frame.as_deref().unwrap_or(OVERWORLD)
 }
 
 impl Backend for Demo {
@@ -994,14 +1069,16 @@ impl Backend for Demo {
             bounds: [-HALF, -HALF, HALF, HALF],
             overlay: false,
             attribution: "synthetic terrain".into(),
+            default_on: None,
+            alpha: None,
         };
         WorldInfo {
             name: "Demo world".into(),
             source: "demo".into(),
-            source_note: Some(if self.running {
-                "synthetic, moving at 20 ticks a second".into()
-            } else {
-                "synthetic, clock stopped".into()
+            source_note: Some(match self.clock {
+                Clock::Still => "synthetic, clock stopped".into(),
+                Clock::Wall => "synthetic, moving at 20 ticks a second".into(),
+                Clock::Stepped { ticks, every_ms } => format!("synthetic, {ticks} ticks every {every_ms} ms"),
             }),
             build: format!("mic-viewer-demo {}", env!("CARGO_PKG_VERSION")),
             frames: vec![
@@ -1024,13 +1101,20 @@ impl Backend for Demo {
                 tick,
                 ticks_per_day: TICKS_PER_DAY,
                 wall_ms: 1_792_560_000_000 + (tick - START) * 50,
-                tps: if self.running { 20.0 } else { 0.0 },
+                tps: match self.clock {
+                    Clock::Still => 0.0,
+                    Clock::Wall => 20.0,
+                    Clock::Stepped { ticks, every_ms } => ticks as f64 * 1000.0 / every_ms.max(1) as f64,
+                },
                 running: self.running,
             },
             freshness: Freshness {
                 age_ms: 0,
-                cycle_ms: self.running.then_some(2000),
-                note: if self.running { "republished every 2 s".into() } else { "nothing moves".into() },
+                cycle_ms: self.clock.cycle_ms(),
+                note: match self.clock.cycle_ms() {
+                    Some(ms) => format!("republished every {} s", ms as f64 / 1000.0),
+                    None => "nothing moves".into(),
+                },
             },
             budget: mic_viewer::api::MARK_BUDGET,
             event_kinds: KINDS
@@ -1071,7 +1155,7 @@ impl Backend for Demo {
         let mut rows: Vec<EventRow> = self
             .all_events()
             .into_iter()
-            .filter(|e| e.t >= q.from && e.t < q.to && q.wants(&e.kind))
+            .filter(|e| e.t >= q.from && e.t < q.to && q.wants(&e.kind) && in_frame(e, q))
             .filter(|e| q.area.is_none_or(|b| e.x >= b[0] && e.x <= b[2] && e.z >= b[1] && e.z <= b[3]))
             .collect();
         let truncated = rows.len() > q.limit;
@@ -1102,7 +1186,7 @@ impl Backend for Demo {
         let buckets = q.limit.max(1);
         let width = ((to - from) as f64 / buckets as f64).max(1.0);
         let mut series: BTreeMap<String, Vec<u64>> = BTreeMap::new();
-        for e in events.iter().filter(|e| e.t >= from && e.t < to && q.wants(&e.kind)) {
+        for e in events.iter().filter(|e| e.t >= from && e.t < to && q.wants(&e.kind) && in_frame(e, q)) {
             let b = (((e.t - from) as f64 / width) as usize).min(buckets - 1);
             series.entry(e.kind.clone()).or_insert_with(|| vec![0; buckets])[b] += 1;
         }
@@ -1126,6 +1210,6 @@ impl Backend for Demo {
     }
 
     fn watchers(&self, open: usize) {
-        self.watchers.store(open, std::sync::atomic::Ordering::Relaxed);
+        self.watchers.store(open, Ordering::Relaxed);
     }
 }

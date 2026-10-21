@@ -100,6 +100,13 @@ pub struct TileLayerDesc {
     pub overlay: bool,
     #[serde(default)]
     pub attribution: String,
+    /// Shown when the viewer has no choice of its own saved. None: the page shows the first base map
+    /// and every overlay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_on: Option<bool>,
+    /// Opacity, 0 to 1. None: opaque.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alpha: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -813,6 +820,10 @@ pub struct EventRow {
     pub mag: i64,
     #[serde(default)]
     pub text: String,
+    /// The frame it happened in. None: the world's first frame. A stream `events` row in another
+    /// frame than the page's is listed and flashed only there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frame: Option<String>,
 }
 
 /// An archived leg.
@@ -857,6 +868,25 @@ mod tests {
         assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"k":"area","box":[0.0,0.0,16.0,32.0]}"#);
         let back: Mark = serde_json::from_str(r#"{"k":"edge","a":[0,0],"b":[3,4],"w":2}"#).unwrap();
         assert_eq!(back, Mark::edge([0.0, 0.0], [3.0, 4.0], 2.0));
+    }
+
+    #[test]
+    fn optional_fields_stay_out_of_the_json_until_set() {
+        let row: EventRow = serde_json::from_str(r#"{"t":5,"kind":"trade.deal","sev":0,"x":1,"z":2}"#).unwrap();
+        assert_eq!(row.frame, None);
+        assert!(!serde_json::to_string(&row).unwrap().contains("frame"));
+        let ring = EventRow { frame: Some("demo:ring".into()), ..row };
+        assert!(serde_json::to_string(&ring).unwrap().contains(r#""frame":"demo:ring""#));
+        let d: TileLayerDesc = serde_json::from_str(
+            r#"{"id":"t","label":"T","url":"t/{z}/{x}/{y}.png","pyramid":{"kind":"square","min_zoom":-7,"max_zoom":0},"bounds":[0,0,1,1]}"#,
+        )
+        .unwrap();
+        assert_eq!((d.default_on, d.alpha), (None, None));
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(!json.contains("default_on") && !json.contains("alpha"), "{json}");
+        let d = TileLayerDesc { default_on: Some(false), alpha: Some(0.6), ..d };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains(r#""default_on":false"#) && json.contains(r#""alpha":0.6"#), "{json}");
     }
 
     #[test]

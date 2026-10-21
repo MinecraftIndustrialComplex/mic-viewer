@@ -7,7 +7,7 @@ use std::sync::Arc;
 use mic_viewer::api::{Card, EventsAnswer, Histogram, Layers, MarksAnswer, WorldInfo};
 use mic_viewer::http::{Handler, Reply, Request};
 use mic_viewer::viewer::{App, Backend};
-use mic_viewer_demo::{Demo, HALF, LAYER_IDS, OVERWORLD, RING, Size};
+use mic_viewer_demo::{Clock, Demo, HALF, LAYER_IDS, OVERWORLD, RING, START, Size};
 
 fn get(app: &App<Demo>, path: &str) -> (u16, Vec<u8>) {
     let (path, query) = path.split_once('?').unwrap_or((path, ""));
@@ -108,4 +108,55 @@ fn a_hundred_thousand_districts_stay_within_the_budget_at_every_zoom() {
     }
     let scene = demo.scene(OVERWORLD, None).unwrap();
     assert_eq!(scene.layers["industry.districts"].len(), 100_000);
+}
+
+#[test]
+fn a_stepped_clock_publishes_the_same_world_every_run_and_events_keep_their_frame() {
+    let size = Size { villages: 60, districts: 40, caravans: 80, days_of_events: 2 };
+    let clock = Clock::Stepped { ticks: 2000, every_ms: 1000 };
+    let run = || {
+        let demo = Arc::new(Demo::with_clock(7, size, clock));
+        let app = App::new(Arc::clone(&demo));
+        let mut cursor = 0;
+        assert!(demo.events_since(&mut cursor).is_empty(), "nothing live before the first publish");
+        let mut rows = Vec::new();
+        let mut bodies = Vec::new();
+        for _ in 0..6 {
+            demo.publish();
+            rows.extend(demo.events_since(&mut cursor));
+            bodies.push(
+                get(
+                    &app,
+                    &format!(
+                        "/api/marks?frame={OVERWORLD}&x0=-6144&z0=-6144&x1=6144&z1=6144&bpp=12&layers=travel.caravans"
+                    ),
+                )
+                .1,
+            );
+        }
+        (demo, app, rows, bodies)
+    };
+    let (demo, app, rows, bodies) = run();
+    let (_, _, rows2, bodies2) = run();
+    assert_eq!(demo.now(), START + 6 * 2000);
+    assert_eq!(rows, rows2, "the same live events on every run");
+    assert_eq!(bodies, bodies2, "the same caravans on every run");
+    assert_ne!(bodies[0], bodies[5], "the caravans move");
+    assert!(
+        rows.iter().any(|r| r.frame.is_none()) && rows.iter().any(|r| r.frame.as_deref() == Some(RING)),
+        "both frames"
+    );
+    assert!(rows.windows(2).all(|w| w[0].t <= w[1].t));
+    let world: WorldInfo = serde_json::from_slice(&get(&app, "/api/world").1).unwrap();
+    assert!(world.time.running);
+    assert_eq!((world.time.tick, world.time.tps, world.freshness.cycle_ms), (START + 12_000, 2000.0, Some(1000)));
+    // Each frame's events are its own.
+    let since = START;
+    let ring: EventsAnswer =
+        serde_json::from_slice(&get(&app, &format!("/api/events?frame={RING}&from={since}&limit=500")).1).unwrap();
+    let over: EventsAnswer =
+        serde_json::from_slice(&get(&app, &format!("/api/events?frame={OVERWORLD}&from={since}&limit=500")).1).unwrap();
+    assert!(!ring.rows.is_empty() && ring.rows.iter().all(|r| r.frame.as_deref() == Some(RING)));
+    assert!(!over.rows.is_empty() && over.rows.iter().all(|r| r.frame.is_none()));
+    assert_eq!(ring.rows.len() + over.rows.len(), rows.len());
 }
