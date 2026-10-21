@@ -157,6 +157,83 @@
     return `${Math.round(h / 24)} days ago`;
   }
 
+  const SOURCES = { save: 'Save', live: 'Live', host: 'Host', demo: 'Demo' };
+  const groupInt = n => {
+    const s = String(Math.abs(Math.round(n))).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return n < 0 && s !== '0' ? '-' + s : s;
+  };
+
+  /** "day 3,467 at 11:46": a tick as a game day and its clock. */
+  function fmtDayAt(tick, tpd) {
+    return `day ${groupInt(MV.gameDay(tick, tpd))} at ${MV.gameClock(tick, tpd)}`;
+  }
+
+  /** The header's line: "Save, day 3,467 at 11:46" (the source alone without a clock). */
+  function fmtSourceTime(source, tick, tpd) {
+    const name = SOURCES[source] || (source ? source.charAt(0).toUpperCase() + source.slice(1) : 'Save');
+    return tick == null ? name : `${name}, ${fmtDayAt(tick, tpd)}`;
+  }
+
+  /**
+   * What the map key lists: for each layer drawn (in `layers` order) the symbols on screen, from
+   * `seen` (a Map, or an object, of layer id to the legend indices drawn, -1 for the layer's own
+   * style). Each group: `{ layer, entries: [{ index, label }] }`, legend order, the layer's own
+   * style last (named after the layer, or "Other" beside legend entries).
+   */
+  function keyGroups(seen, layers) {
+    const out = [];
+    if (!seen) return out;
+    const get = id => (typeof seen.get === 'function' ? seen.get(id) : seen[id]);
+    for (const d of layers || []) {
+      const s = get(d.id);
+      if (!s) continue;
+      const legend = d.legend || [];
+      const idx = [...new Set([...s].map(Number))]
+        .filter(i => i === -1 || (Number.isInteger(i) && i >= 0 && i < legend.length))
+        .sort((a, b) => (a < 0) - (b < 0) || a - b);
+      if (!idx.length) continue;
+      const entries = idx.map(i => ({ index: i, label: i >= 0 ? legend[i].label : idx.length > 1 ? 'Other' : d.label }));
+      out.push({ layer: d, entries });
+    }
+    return out;
+  }
+
+  /** `seen` worked out from the marks held, for drawing code that does not report it: each layer's
+   *  legend indices, a cluster's from its `by` counts, -1 for a mark without one. */
+  function seenFromAnswers(list) {
+    const seen = new Map();
+    for (const { desc, data } of list || []) {
+      const s = new Set();
+      for (const m of (data && data.marks) || []) {
+        if (m.k === 'cluster' && m.by && Object.keys(m.by).length) for (const k of Object.keys(m.by)) s.add(Number(k));
+        else s.add(m.ci != null ? m.ci : -1);
+      }
+      if (s.size) seen.set(desc.id, s);
+    }
+    return seen;
+  }
+
+  /** The zoom to fly to for a thing found by name: town level or closer, inside its layer's range. */
+  function findBpp(desc, bpp) {
+    let b = Math.min(bpp, 2);
+    if (desc && desc.max_bpp != null && b > desc.max_bpp) b = desc.max_bpp;
+    if (desc && desc.min_bpp != null && b < desc.min_bpp) b = desc.min_bpp;
+    return b;
+  }
+
+  /** The base map shown: the first base (not overlay) tile layer that is on, or null for none. */
+  function baseShown(tiles, on) {
+    const d = (tiles || []).find(t => !t.overlay && on.has(t.id));
+    return d ? d.id : null;
+  }
+
+  /** A layer's count in the panel: whole numbers to 9,999, then compact ("12k"). */
+  function fmtCount(n) {
+    if (n == null || !isFinite(n)) return '';
+    if (Math.abs(n) < 10000) return groupInt(n);
+    return MV.compact ? MV.compact(n) : groupInt(n);
+  }
+
   // ------------------------------------------------------------------------------------------------
   // The page
   // ------------------------------------------------------------------------------------------------
@@ -219,6 +296,11 @@
       heard: { frames: 0, rows: 0 },
       lastDraw: null, es: null, connected: false, helloSeen: false, hideTimer: 0, hashTimer: 0, ownHash: null,
       flight: 0, cursorW: null, sheet: null,
+      // The map's colours (`--map-*`) and the muted base map's filter, read on a theme change.
+      theme: null, muteFilter: null,
+      // Layers with nothing in this frame at all (id -> why), and layers just turned on.
+      empty: new Map(), justOn: new Set(),
+      rows: null, groupBoxes: null, notHere: null,
     };
 
     // ----------------------------------------------------------------------------------------------
@@ -253,17 +335,44 @@
     const cssVar = name => getComputedStyle(html).getPropertyValue(name).trim();
     const effectiveTheme = () => html.dataset.theme || (lightMQ.matches ? 'light' : 'dark');
 
+    /** The map's colours (viewer.css's `--map-*`), read once per theme change, not per frame. */
+    function readTheme() {
+      const dark = effectiveTheme() === 'dark';
+      A.theme = {
+        dark,
+        ink: cssVar('--map-ink') || (dark ? '#ebe6dc' : '#1f2328'),
+        ink2: cssVar('--map-ink-2') || (dark ? '#a59f94' : '#5b6470'),
+        paper: cssVar('--map-paper') || (dark ? '#14171b' : '#f1efe9'),
+        halo: cssVar('--map-halo') || (dark ? 'rgba(14, 16, 19, 0.9)' : 'rgba(255, 255, 255, 0.92)'),
+        bad: cssVar('--map-bad') || (dark ? '#ff6b6b' : '#d1242f'),
+        warn: cssVar('--map-warn') || (dark ? '#e3b341' : '#b7791f'),
+        off: cssVar('--map-off') || '#8b949e',
+      };
+      A.muteFilter = cssVar('--map-mute') || null;
+    }
+
+    const muted = () => store.get('muted') !== false;
+    function applyMute() {
+      if (map) map.setTileFilter(muted() ? A.muteFilter : null);
+    }
+
     function applyTheme() {
       const s = store.get('theme');
       if (s === 'dark' || s === 'light') html.dataset.theme = s;
       else delete html.dataset.theme;
-      const dark = effectiveTheme() === 'dark';
+      readTheme();
+      const dark = A.theme.dark;
       const b = $('btn-theme');
       b.setAttribute('aria-label', dark ? 'Switch to the light theme' : 'Switch to the dark theme');
       b.title = dark ? 'Light theme' : 'Dark theme';
       b.textContent = '';
-      b.appendChild(icon(dark ? 'sun' : 'moon'));
-      if (map) { map.setBackground(cssVar('--map-bg') || '#05070b'); placeOverlays(); }
+      b.append(icon(dark ? 'sun' : 'moon'), el('span', 'tbtn-label', dark ? 'Light' : 'Dark'));
+      paintSwatches();
+      if (map) {
+        map.setBackground(A.theme.paper);
+        applyMute();
+        placeOverlays();
+      }
       if (timeline) timeline.redraw();
     }
     $('btn-theme').addEventListener('click', () => {
@@ -316,6 +425,7 @@
         }
       }
       ctx.setLineDash([]);
+      const th = A.theme;
       for (const r of A.events) {
         const c = kindColor(r.kind);
         const rad = r.sev >= 2 ? 5.5 : 4.2;
@@ -326,8 +436,8 @@
           ctx.arc(x, y, rad, 0, Math.PI * 2);
           ctx.fillStyle = MV.rgba(c, 0.35);
           ctx.fill();
-          ctx.lineWidth = 2.5;
-          ctx.strokeStyle = 'rgba(8, 10, 14, 0.75)';
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = th.halo;
           ctx.stroke();
           ctx.lineWidth = 1.5;
           ctx.strokeStyle = c;
@@ -341,10 +451,10 @@
           ctx.beginPath();
           ctx.arc(x, y, 12, 0, Math.PI * 2);
           ctx.lineWidth = 4;
-          ctx.strokeStyle = 'rgba(8, 10, 14, 0.7)';
+          ctx.strokeStyle = th.halo;
           ctx.stroke();
           ctx.lineWidth = 2;
-          ctx.strokeStyle = '#ffffff';
+          ctx.strokeStyle = th.ink;
           ctx.stroke();
           ctx.beginPath();
           for (const [a, b] of [[-20, -15], [15, 20]]) {
@@ -371,8 +481,9 @@
 
     function overlay(ctx) {
       if (!A.ready) return;
-      A.lastDraw = MV.drawMarks(ctx, map, drawList(), { t: drawT(), selected: A.selected, hovered: A.hovered });
+      A.lastDraw = MV.drawMarks(ctx, map, drawList(), { t: drawT(), selected: A.selected, hovered: A.hovered, theme: A.theme });
       drawEvents(ctx);
+      scheduleKey();
     }
 
     function onView() {
@@ -546,6 +657,7 @@
       getJSON(marksURL(A.frame, box, bpp, ask, t)).then(ans => {
         if (seq !== A.fullSeq) return;            // a newer full answer is coming
         const got = (ans && ans.layers) || {};
+        noteEmpty(got);
         if (only) {
           if (A.marks.key !== key) return;
           Object.assign(A.marks.layers, got);
@@ -565,7 +677,8 @@
     }
 
     // ----------------------------------------------------------------------------------------------
-    // The layer panel
+    // Swatches: the map's own drawing code (marks.js's drawSwatch) in a small canvas, painted again
+    // on a theme change; an SVG stand-in where the drawing code has none.
     // ----------------------------------------------------------------------------------------------
     function starPath(c, R, r) {
       let d = '';
@@ -576,19 +689,19 @@
       return d + 'Z';
     }
 
-    /** A 16 x 16 swatch: the glyph of a point or leg layer, a line, an area, a grid or text. */
-    function swatch(kind, glyph, color) {
+    /** A 16 x 16 SVG swatch: the glyph of a point or leg layer, a line, an area, a grid or text. */
+    function svgSwatch(kind, glyph, color) {
       const s = svgEl('svg', { viewBox: '0 0 16 16', class: 'glyph', 'aria-hidden': 'true' });
       const add = (tag, a) => s.appendChild(svgEl(tag, a));
       const casing = { stroke: 'rgba(0,0,0,.45)', 'stroke-width': 1 };
       if (kind === 'edge') add('path', { d: 'M2 13 14 3', stroke: color, 'stroke-width': 2.6, 'stroke-linecap': 'round', fill: 'none' });
       else if (kind === 'path') add('path', { d: 'M1.5 12 5.5 6.5 9.5 10 14.5 3.5', stroke: color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', fill: 'none' });
-      else if (kind === 'area') add('rect', { x: 2, y: 2, width: 12, height: 12, rx: 3, fill: color, 'fill-opacity': 0.35, stroke: color, 'stroke-width': 1.5 });
+      else if (kind === 'area') add('rect', { x: 2, y: 2, width: 12, height: 12, rx: 2, fill: color, 'fill-opacity': 0.25, stroke: color, 'stroke-width': 1.5 });
       else if (kind === 'cell') {
         const fs = [0.15, 0.45, 0.7, 0.95];
         fs.forEach((f, i) => add('rect', { x: 2 + (i % 2) * 6.5, y: 2 + Math.floor(i / 2) * 6.5, width: 5.5, height: 5.5, rx: 1, fill: MV.rampColor('heat', f) }));
       } else if (kind === 'label') {
-        const t = svgEl('text', { x: 8, y: 12.5, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, fill: color });
+        const t = svgEl('text', { x: 8, y: 12.5, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, fill: 'currentColor' });
         t.textContent = 'Aa';
         s.appendChild(t);
       } else {
@@ -609,6 +722,47 @@
       return (d.kinds && d.kinds[0]) || 'point';
     }
 
+    function paintSwatch(c) {
+      const s = c._sw;
+      const dpr = globalThis.devicePixelRatio || 1;
+      c.width = Math.round(s.w * dpr);
+      c.height = Math.round(s.h * dpr);
+      const g = c.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, s.w, s.h);
+      try {
+        MV.drawSwatch(g, s.desc, s.index, s.w, s.h, A.theme);
+      } catch (e) { /* a swatch is not worth an error */ }
+    }
+    function paintSwatches() {
+      if (!MV.drawSwatch) return;
+      for (const c of document.querySelectorAll('canvas.sw')) if (c._sw) paintSwatch(c);
+    }
+
+    /** The swatch of a layer (`index` null) or of one of its legend entries, `w` x `h` CSS px. */
+    function swatchEl(desc, index, w, h) {
+      w = w || 22;
+      h = h || 14;
+      let s;
+      if (MV.drawSwatch) {
+        s = el('canvas', 'sw');
+        s._sw = { desc, index, w, h };
+        paintSwatch(s);
+      } else {
+        const e = index != null && desc.legend ? desc.legend[index] : null;
+        const color = (e && e.color) || (desc.style && desc.style.color) || '#888888';
+        s = svgSwatch(layerKind(desc), (e && e.glyph) || (desc.style && desc.style.glyph), color);
+      }
+      s.setAttribute('aria-hidden', 'true');
+      s.style.width = w + 'px';
+      s.style.height = h + 'px';
+      return s;
+    }
+
+    // ----------------------------------------------------------------------------------------------
+    // The layer panel: the base map, then the layers by group, then (collapsed) the layers this world
+    // has nothing for
+    // ----------------------------------------------------------------------------------------------
     function saveLayers() {
       const o = store.get('layers') || {};
       for (const d of A.layers) o[d.id] = A.on.has(d.id);
@@ -632,36 +786,151 @@
       scheduleHash();
     }
 
+    /** Notes which layers answered that this frame has nothing for them; one just turned on says so. */
+    function noteEmpty(got) {
+      for (const [id, data] of Object.entries(got)) {
+        const why = emptyReason(true, null, data);
+        if (why) {
+          if (!A.empty.has(id) && A.justOn.has(id)) {
+            const d = A.byId.get(id);
+            toast(`${d ? d.label : id}: not in this world (${why}).`);
+          }
+          A.empty.set(id, why);
+        } else A.empty.delete(id);
+        A.justOn.delete(id);
+      }
+    }
+
+    const usableTiles = () => ((A.frameDesc && A.frameDesc.tiles) || []).filter(d => MV.pyramidFor(d));
+
+    function pushTiles() {
+      map.setTiles(A.tileList.map(l => Object.assign({}, l, { visible: A.tilesOn.has(l.id) })));
+    }
+    function saveTiles() {
+      const o = store.get('tiles') || {};
+      for (const l of A.tileList) o[l.id] = A.tilesOn.has(l.id);
+      store.set('tiles', o);
+    }
     function setTileLayer(id, on) {
       if (on) A.tilesOn.add(id);
       else A.tilesOn.delete(id);
-      const o = store.get('tiles') || {};
-      o[id] = on;
-      store.set('tiles', o);
-      map.setTiles(A.tileList.map(l => Object.assign({}, l, { visible: A.tilesOn.has(l.id) })));
+      saveTiles();
+      pushTiles();
       syncRows();
+    }
+    /** Shows one base map (`id`), or none (null); overlays stay as they are. */
+    function setBase(id) {
+      for (const l of A.tileList) {
+        if (l.overlay) continue;
+        if (l.id === id) A.tilesOn.add(l.id);
+        else A.tilesOn.delete(l.id);
+      }
+      saveTiles();
+      pushTiles();
+      syncRows();
+    }
+
+    function layerRow(d) {
+      const row = el('div', 'lrow');
+      row.dataset.layer = d.id;
+      if (d.description) row.title = d.description;
+      const lab = el('label', 'lrow-main');
+      const cb = el('input');
+      cb.type = 'checkbox';
+      cb.checked = A.on.has(d.id);
+      cb.addEventListener('change', () => {
+        if (cb.checked) A.justOn.add(d.id);
+        setLayer(d.id, cb.checked);
+      });
+      lab.append(cb, swatchEl(d, null, 22, 14), el('span', 'lname', d.label), el('span', 'lcount num'));
+      row.appendChild(lab);
+      // The description and the key of the layer, behind a toggle.
+      const detail = el('div', 'ldetail');
+      detail.id = 'ld-' + d.id.replace(/[^A-Za-z0-9_-]/g, '_');
+      detail.hidden = true;
+      if (d.description) detail.appendChild(el('p', 'ldesc', d.description));
+      if (d.legend && d.legend.length) {
+        const ul = el('ul', 'legend');
+        ul.setAttribute('aria-label', `${d.label} key`);
+        d.legend.forEach((e, i) => {
+          const li = el('li');
+          li.append(swatchEl(d, i, 22, 14), el('span', null, e.label));
+          ul.appendChild(li);
+        });
+        detail.appendChild(ul);
+      }
+      if (detail.childNodes.length) {
+        const more = el('button', 'lmore');
+        more.type = 'button';
+        more.setAttribute('aria-expanded', 'false');
+        more.setAttribute('aria-controls', detail.id);
+        more.setAttribute('aria-label', `About ${d.label}`);
+        more.title = 'What this layer shows';
+        more.appendChild(icon('chevron'));
+        more.addEventListener('click', () => {
+          const open = detail.hidden;
+          detail.hidden = !open;
+          more.setAttribute('aria-expanded', String(open));
+        });
+        row.appendChild(more);
+        if (d.description) cb.setAttribute('aria-describedby', detail.id);
+      }
+      row.appendChild(detail);
+      return row;
     }
 
     function buildPanel() {
       const body = $('side-body');
       body.textContent = '';
-      const tiles = (A.frameDesc && A.frameDesc.tiles) || [];
+      A.rows = new Map();
+      A.groupBoxes = new Map();
+      const tiles = usableTiles();
       if (tiles.length) {
         const sec = el('section', 'grp');
         sec.appendChild(el('h3', 'grp-title', 'Base map'));
-        for (const d of tiles) {
+        const line = el('div', 'base');
+        const bases = tiles.filter(d => !d.overlay);
+        if (bases.length) {
+          const seg = el('div', 'seg');
+          seg.id = 'base-seg';
+          seg.setAttribute('role', 'group');
+          seg.setAttribute('aria-label', 'Base map');
+          for (const d of [...bases, { id: '', label: 'None' }]) {
+            const b = el('button', null, d.label || d.id);
+            b.type = 'button';
+            b.dataset.base = d.id;
+            if (d.attribution) b.title = d.attribution;
+            b.addEventListener('click', () => setBase(d.id || null));
+            seg.appendChild(b);
+          }
+          line.appendChild(seg);
+        }
+        const mute = el('label', 'mute');
+        mute.title = 'Wash out the base map so what is drawn over it reads first';
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.id = 'mute';
+        cb.checked = muted();
+        cb.addEventListener('change', () => {
+          store.set('muted', cb.checked);
+          applyMute();
+        });
+        mute.append(cb, document.createTextNode('Muted'));
+        line.appendChild(mute);
+        sec.appendChild(line);
+        for (const d of tiles.filter(t => t.overlay)) {
           const row = el('div', 'lrow trow');
           row.dataset.tiles = d.id;
+          if (d.attribution) row.title = d.attribution;
           const lab = el('label', 'lrow-main');
-          const cb = el('input');
-          cb.type = 'checkbox';
-          cb.checked = A.tilesOn.has(d.id);
-          cb.addEventListener('change', () => setTileLayer(d.id, cb.checked));
+          const tcb = el('input');
+          tcb.type = 'checkbox';
+          tcb.checked = A.tilesOn.has(d.id);
+          tcb.addEventListener('change', () => setTileLayer(d.id, tcb.checked));
           const sw = el('span', 'tswatch');
           sw.appendChild(icon('tiles'));
-          lab.append(cb, sw, el('span', 'lname', d.label || d.id), el('span', 'lcount', d.overlay ? 'overlay' : ''));
+          lab.append(tcb, sw, el('span', 'lname', d.label || d.id), el('span', 'lcount'));
           row.appendChild(lab);
-          if (d.attribution) row.appendChild(el('p', 'ldesc', d.attribution));
           sec.appendChild(row);
         }
         body.appendChild(sec);
@@ -672,108 +941,94 @@
         const ls = A.layers.filter(d => d.group === g.id);
         if (!ls.length) continue;
         const sec = el('section', 'grp');
-        const h = el('h3', 'grp-title', g.label);
-        sec.appendChild(h);
+        sec.dataset.group = g.id;
+        sec.appendChild(el('h3', 'grp-title', g.label));
+        const list = el('div', 'grp-rows');
         for (const d of ls) {
-          const row = el('div', 'lrow');
-          row.dataset.layer = d.id;
-          const lab = el('label', 'lrow-main');
-          const cb = el('input');
-          cb.type = 'checkbox';
-          cb.checked = A.on.has(d.id);
-          cb.addEventListener('change', () => setLayer(d.id, cb.checked));
-          const descId = 'ld-' + d.id.replace(/[^A-Za-z0-9_-]/g, '_');
-          const color = (d.style && d.style.color) || '#cccccc';
-          lab.append(cb, swatch(layerKind(d), d.style && d.style.glyph, color), el('span', 'lname', d.label), el('span', 'lcount num'));
-          row.appendChild(lab);
-          if (d.description) {
-            const p = el('p', 'ldesc', d.description);
-            p.id = descId;
-            p.title = d.description;
-            cb.setAttribute('aria-describedby', descId);
-            row.appendChild(p);
-          }
-          if (d.legend && d.legend.length) {
-            const ul = el('ul', 'legend');
-            ul.setAttribute('aria-label', `${d.label} legend`);
-            for (const e of d.legend) {
-              const li = el('li', 'chip');
-              li.append(swatch(layerKind(d), e.glyph || (d.style && d.style.glyph), e.color), el('span', null, e.label));
-              ul.appendChild(li);
-            }
-            row.appendChild(ul);
-          }
-          sec.appendChild(row);
+          const row = layerRow(d);
+          A.rows.set(d.id, row);
+          list.appendChild(row);
         }
+        sec.appendChild(list);
+        A.groupBoxes.set(g.id, { sec, list });
         body.appendChild(sec);
       }
+      const box = el('details', 'nothere');
+      const sum = el('summary');
+      const title = el('span');
+      sum.append(icon('chevron'), title);
+      const list = el('div', 'nothere-rows');
+      box.append(sum, list);
+      box.hidden = true;
+      body.appendChild(box);
+      A.notHere = { box, list, title };
       syncRows();
     }
 
-    /** Checkbox state, zoom greying, and the counts of the last answer. */
+    /** Puts a layer's row in its group, or in "Not in this world" when the frame has nothing for it,
+     *  keeping the layers' order. Moves it only when it changes place (a move drops the focus). */
+    function placeRow(d, row, away) {
+      const target = away ? A.notHere.list : (A.groupBoxes.get(d.group) || {}).list;
+      if (!target || row.parentNode === target) return;
+      let before = null;
+      for (let j = A.layers.indexOf(d) + 1; j < A.layers.length && !before; j++) {
+        const r = A.rows.get(A.layers[j].id);
+        if (r && r.parentNode === target) before = r;
+      }
+      target.insertBefore(row, before);
+    }
+
+    /** Checkbox state, places, zoom greying, and the counts of the last answer. */
     function syncRows() {
+      if (!A.rows || !map) return;
       const bpp = map.view.bpp;
-      for (const row of document.querySelectorAll('.lrow[data-layer]')) {
-        const d = A.byId.get(row.dataset.layer);
-        if (!d) continue;
+      for (const d of A.layers) {
+        const row = A.rows.get(d.id);
+        if (!row) continue;
         const on = A.on.has(d.id);
+        const why = A.empty.get(d.id) || null;
+        placeRow(d, row, why);
         row.classList.toggle('on', on);
         row.querySelector('input').checked = on;
         const hint = zoomHint(d, bpp);
         row.classList.toggle('outzoom', !!hint);
         const count = row.querySelector('.lcount');
         const data = A.marks.layers[d.id];
-        count.classList.remove('clustered');
         if (hint) {
           count.textContent = hint === 'in' ? 'zoom in' : 'zoom out';
-          row.title = hint === 'in' ? `${d.label}: shown when zoomed in further` : `${d.label}: shown when zoomed out further`;
+          count.title = hint === 'in' ? `${d.label}: drawn when zoomed in further` : `${d.label}: drawn when zoomed out further`;
+        } else if (!on || !data) {
+          count.textContent = '';
+          count.title = '';
         } else {
-          row.title = '';
-          if (!on || !data) count.textContent = '';
-          else if (emptyReason(on, hint, data)) {
-            count.textContent = 'empty';
-            count.title = data.empty;
-          } else if (data.clustered) {
-            count.textContent = MV.compact(data.total);
-            count.classList.add('clustered');
-            count.title = `${fmtInt(data.total)} in view, grouped`;
-          } else {
-            count.textContent = data.shown < data.total ? `${MV.compact(data.shown)} of ${MV.compact(data.total)}` : MV.compact(data.total);
-            count.title = `${fmtInt(data.total)} in view`;
-          }
+          count.textContent = fmtCount(data.total);
+          count.title = data.clustered ? `${fmtInt(data.total)} in view, grouped where they crowd`
+            : data.shown < data.total ? `${fmtInt(data.shown)} of ${fmtInt(data.total)} in view drawn` : `${fmtInt(data.total)} in view`;
         }
         row.classList.toggle('nopast', A.t != null && on && !d.has_past);
-        const why = emptyReason(on, hint, data);
-        let note = row.querySelector('.lempty');
+        const detail = row.querySelector('.ldetail');
+        let note = detail.querySelector('.lempty');
         if (why) {
           if (!note) {
             note = el('p', 'lempty');
-            note.id = 'le-' + d.id.replace(/[^A-Za-z0-9_-]/g, '_');
-            const main = row.querySelector('.lrow-main');
-            row.insertBefore(note, main ? main.nextSibling : null);
-            const cb = row.querySelector('input');
-            cb.setAttribute('aria-describedby', [cb.getAttribute('aria-describedby'), note.id].filter(Boolean).join(' '));
+            detail.prepend(note);
           }
-          note.textContent = why;
-        } else if (note) {
-          const cb = row.querySelector('input');
-          const rest = (cb.getAttribute('aria-describedby') || '').split(' ').filter(x => x && x !== note.id);
-          if (rest.length) cb.setAttribute('aria-describedby', rest.join(' '));
-          else cb.removeAttribute('aria-describedby');
-          note.remove();
-        }
+          note.textContent = why.charAt(0).toUpperCase() + why.slice(1);
+        } else if (note) note.remove();
       }
       for (const row of document.querySelectorAll('.lrow[data-tiles]')) {
         const on = A.tilesOn.has(row.dataset.tiles);
         row.classList.toggle('on', on);
         row.querySelector('input').checked = on;
       }
-      for (const sec of document.querySelectorAll('#side-body .grp')) {
-        const rows = sec.querySelectorAll('.lrow');
-        let n = 0;
-        for (const r of rows) if (r.classList.contains('on')) n++;
-        sec.querySelector('.grp-title').dataset.count = `${n}/${rows.length}`;
-      }
+      const base = baseShown(A.tileList, A.tilesOn) || '';
+      for (const b of document.querySelectorAll('#base-seg button')) b.setAttribute('aria-pressed', String(b.dataset.base === base));
+      const mute = $('mute');
+      if (mute) mute.checked = muted();
+      for (const { sec, list } of A.groupBoxes.values()) sec.hidden = !list.children.length;
+      const n = A.notHere.list.children.length;
+      A.notHere.box.hidden = !n;
+      A.notHere.title.textContent = `Not in this world (${n})`;
     }
     const updateCounts = () => syncRows();
     let zoomRowsTimer = 0;
@@ -784,6 +1039,54 @@
         syncRows();
       }, 100);
     }
+
+    // ----------------------------------------------------------------------------------------------
+    // The key: every symbol drawn on screen now, by layer, with the map's own swatches
+    // ----------------------------------------------------------------------------------------------
+    const keyBox = $('key'), keyHead = $('key-head'), keyBody = $('key-body');
+    let keyTimer = 0, keySig = null;
+
+    function scheduleKey() {
+      if (keyTimer) return;
+      keyTimer = setTimeout(() => {
+        keyTimer = 0;
+        updateKey();
+      }, 250);
+    }
+
+    function updateKey() {
+      if (!A.ready) return;
+      const seen = A.lastDraw && A.lastDraw.seen && typeof A.lastDraw.seen.get === 'function' ? A.lastDraw.seen : seenFromAnswers(drawList());
+      const groups = keyGroups(seen, A.layers);
+      const sig = groups.map(g => g.layer.id + ':' + g.entries.map(e => e.index).join(',')).join('|');
+      if (sig === keySig) return;
+      keySig = sig;
+      keyBox.hidden = !groups.length;
+      keyBody.textContent = '';
+      for (const g of groups) {
+        const box = el('div', 'key-grp');
+        // A layer drawn in one style is one line named after it; one with several gets a heading.
+        const single = g.entries.length === 1 && g.entries[0].label === g.layer.label;
+        if (!single) box.appendChild(el('h3', null, g.layer.label));
+        const ul = el('ul');
+        for (const e of g.entries) {
+          const li = el('li');
+          li.append(swatchEl(g.layer, e.index < 0 ? null : e.index, 22, 14), el('span', null, e.label));
+          if (single && g.layer.description) li.title = g.layer.description;
+          ul.appendChild(li);
+        }
+        box.appendChild(ul);
+        keyBody.appendChild(box);
+      }
+    }
+
+    function setKeyOpen(open, quiet) {
+      keyBody.hidden = !open;
+      keyHead.setAttribute('aria-expanded', String(open));
+      keyHead.title = open ? 'Hide the key' : 'Show the key';
+      if (!quiet) store.set('key', open);
+    }
+    keyHead.addEventListener('click', () => setKeyOpen(keyBody.hidden));
 
     // ----------------------------------------------------------------------------------------------
     // Cards
@@ -797,6 +1100,7 @@
       onFly: at => flyTo(at[0], at[1]),
       fmtTick: t => MV.fmtGameTime(t, A.tpd),
       fmtAt: at => `x ${fmtInt(Math.floor(at[0]))}, z ${fmtInt(Math.floor(at[1]))}`,
+      swatch: d => swatchEl(d, null, 18, 12),
     };
 
     function openCard(layer, id, o) {
@@ -886,13 +1190,15 @@
 
     // On a desk the card covers the stage's right edge: the zoom buttons and the scale bar step
     // left of it. On a phone the card is a sheet and they stay put.
+    // The scale bar sits between the readout (bottom) and the zoom buttons (viewer.css).
     function placeOverlays() {
       if (!map) return;
-      const covered = !cardBox.hidden && !phoneMQ.matches;
+      const phone = phoneMQ.matches;
+      const covered = !cardBox.hidden && !phone;
       $('stage').classList.toggle('card-open', covered);
       map.setScaleBar({
-        right: covered ? cardBox.offsetWidth + 26 : 14, bottom: 14,
-        ink: cssVar('--scale-ink') || '#ffffff', halo: cssVar('--scale-halo') || 'rgba(0,0,0,.55)',
+        right: covered ? cardBox.offsetWidth + 24 : phone ? 16 : 12, bottom: phone ? 44 : 40,
+        ink: A.theme.ink, halo: A.theme.halo,
       });
     }
 
@@ -958,13 +1264,131 @@
         setSide(side.hidden);
       } else if ((ev.key === 't' || ev.key === 'T') && ev.target === canvas && timeline) {
         setTimeline(tlPanel.hidden);
+      } else if (ev.key === '/' && !$('find').hidden) {
+        ev.preventDefault();
+        findQ.focus();
+        findQ.select();
       }
     });
 
     // ----------------------------------------------------------------------------------------------
-    // Time: the source badge, the past
+    // Finding things by name (`/api/find`, when the world says `find`): arrows and Enter pick, a pick
+    // flies there and opens the card
     // ----------------------------------------------------------------------------------------------
-    const SOURCES = { save: 'Save', live: 'Live', host: 'Host', demo: 'Demo' };
+    const findQ = $('find-q'), findList = $('find-list');
+    const F = { seq: 0, timer: 0, items: [], active: -1, q: '' };
+
+    function findOpen(on) {
+      findList.hidden = !on;
+      findQ.setAttribute('aria-expanded', String(on));
+      if (!on) findQ.removeAttribute('aria-activedescendant');
+    }
+
+    function findMark() {
+      for (const li of findList.querySelectorAll('.find-opt')) {
+        const on = Number(li.dataset.i) === F.active;
+        li.setAttribute('aria-selected', String(on));
+        if (on) {
+          findQ.setAttribute('aria-activedescendant', li.id);
+          li.scrollIntoView({ block: 'nearest' });
+        }
+      }
+    }
+
+    function findRender() {
+      findList.textContent = '';
+      if (!F.q) {
+        findOpen(false);
+        return;
+      }
+      if (!F.items.length) {
+        const li = el('li', 'find-none', `Nothing found for "${F.q}"`);
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-disabled', 'true');
+        findList.appendChild(li);
+      }
+      F.items.forEach((r, i) => {
+        const d = A.byId.get(r.layer);
+        const li = el('li', 'find-opt');
+        li.id = 'find-opt-' + i;
+        li.dataset.i = String(i);
+        li.setAttribute('role', 'option');
+        const frame = r.frame && r.frame !== A.frame ? A.world.frames.find(f => f.id === r.frame) : null;
+        const kind = [r.kind || (d ? d.label : r.layer), frame ? frame.label || frame.id : null].filter(Boolean).join(', ');
+        li.append(d ? swatchEl(d, null, 22, 14) : el('span'), el('span', 'find-label', r.label || String(r.id)), el('span', 'find-kind', kind));
+        // Before the input's blur closes the list.
+        li.addEventListener('mousedown', ev => {
+          ev.preventDefault();
+          findPick(i);
+        });
+        findList.appendChild(li);
+      });
+      findOpen(true);
+      findMark();
+    }
+
+    function findAsk() {
+      const q = findQ.value.trim();
+      F.q = q;
+      const seq = ++F.seq;
+      if (!q) {
+        F.items = [];
+        findRender();
+        return;
+      }
+      getJSON(`api/find?q=${encodeURIComponent(q)}&limit=20`).then(ans => {
+        if (seq !== F.seq) return;
+        F.items = (ans && ans.found) || [];
+        F.active = F.items.length ? 0 : -1;
+        findRender();
+      }, () => {
+        if (seq !== F.seq) return;
+        F.items = [];
+        F.active = -1;
+        findRender();
+      });
+    }
+
+    async function findPick(i) {
+      const r = F.items[i];
+      if (!r) return;
+      findOpen(false);
+      canvas.focus({ preventScroll: true });
+      const d = A.byId.get(r.layer);
+      if (d && !A.on.has(r.layer)) setLayer(r.layer, true);
+      const bpp = findBpp(d, map.view.bpp);
+      if (r.frame && r.frame !== A.frame && A.world.frames.some(f => f.id === r.frame)) await setFrame(r.frame, { x: r.x, z: r.z, bpp });
+      else if (r.x != null && r.z != null) flyTo(r.x, r.z, bpp);
+      openCard(r.layer, r.id, {});
+    }
+
+    findQ.addEventListener('input', () => {
+      clearTimeout(F.timer);
+      F.timer = setTimeout(findAsk, 120);
+    });
+    findQ.addEventListener('keydown', ev => {
+      const n = F.items.length;
+      if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+        if (!n) return;
+        ev.preventDefault();
+        if (findList.hidden) findOpen(true);
+        F.active = ev.key === 'ArrowDown' ? (F.active + 1) % n : (F.active - 1 + n) % n;
+        findMark();
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        if (n) findPick(F.active >= 0 ? F.active : 0);
+      } else if (ev.key === 'Escape' && !findList.hidden) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        findOpen(false);
+      }
+    });
+    findQ.addEventListener('focus', () => { if (F.q) findRender(); });
+    findQ.addEventListener('blur', () => findOpen(false));
+
+    // ----------------------------------------------------------------------------------------------
+    // Time: where the data comes from and when, the past
+    // ----------------------------------------------------------------------------------------------
 
     function setTime(time, fresh) {
       if (time) {
@@ -986,8 +1410,7 @@
       const st = stale();
       const down = !!(A.world.stream && !A.connected && A.helloSeen);
       badge.className = `source src-${src}${st ? ' stale' : ''}${down ? ' down' : ''}${A.time && A.time.running && !st && !down ? ' running' : ''}`;
-      $('src-kind').textContent = SOURCES[src] || src;
-      $('src-time').textContent = A.time ? MV.fmtGameTime(nowTick(), A.tpd) : '';
+      $('src-text').textContent = fmtSourceTime(src, A.time ? nowTick() : null, A.tpd);
       let fresh = '';
       const f = A.fresh;
       const age = f && f.age_ms != null ? f.age_ms + (now() - A.freshAt) : null;
@@ -1004,7 +1427,7 @@
     function updatePast() {
       const past = A.t != null;
       $('past').hidden = !past;
-      if (past) $('past-time').textContent = MV.fmtGameTime(A.t, A.tpd);
+      if (past) $('past-time').textContent = fmtDayAt(A.t, A.tpd);
       $('stage').classList.toggle('in-past', past);
       syncRows();
     }
@@ -1161,6 +1584,8 @@
       A.events = [];
       A.eventLegs = [];
       A.eventSel = null;
+      A.empty = new Map();
+      keySig = null;
       if (changing && A.card) closeCard();
       let proj;
       try {
@@ -1169,7 +1594,7 @@
         toast(`The projection of ${f.label} did not load: ${e.message}`);
         proj = MV.projectionFor(f);
       }
-      const usable = (f.tiles || []).filter(d => MV.pyramidFor(d));
+      const usable = usableTiles();
       const shown = tilesShown(usable, store.get('tiles') || {});
       const list = [];
       let base = null;
@@ -1178,7 +1603,11 @@
         if (!base) base = pyr;
         if (shown[d.id]) A.tilesOn.add(d.id);
         else A.tilesOn.delete(d.id);
-        list.push({ id: d.id, url: MV.tileUrl(d.url), alpha: d.alpha != null ? d.alpha : 1, pyramid: pyr, bounds: d.bounds || null, visible: A.tilesOn.has(d.id) });
+        // Overlays carry data and are never muted; base maps take the map's filter.
+        list.push({
+          id: d.id, url: MV.tileUrl(d.url), alpha: d.alpha != null ? d.alpha : 1, pyramid: pyr, bounds: d.bounds || null,
+          overlay: !!d.overlay, filter: d.overlay ? false : null, visible: A.tilesOn.has(d.id),
+        });
       }
       A.tileList = list;
       map.setProjection(proj, base || MV.squarePyramid({}), f.bounds || null);
@@ -1235,6 +1664,7 @@
         sel.appendChild(o);
       }
       $('frame-pick').hidden = (world.frames || []).length < 2;
+      $('find').hidden = !world.find;
 
       // Layers: the link's, else this viewer's last, else the defaults.
       const h = parseHash(location.hash);
@@ -1247,11 +1677,12 @@
         canvas,
         projection: { period: 0, zRange: null },
         pyramid: MV.squarePyramid({}),
-        background: cssVar('--map-bg') || '#05070b',
+        background: A.theme.paper,
+        tileFilter: muted() ? A.muteFilter : null,
         minBpp: 1 / 4,
         onView, onHover, onClick, onKey,
         overlays: [overlay],
-        scaleBar: { right: 14, bottom: 14 },
+        scaleBar: { right: 12, bottom: 40, ink: A.theme.ink, halo: A.theme.halo },
         start: false,
       });
       applyTheme();
@@ -1284,7 +1715,7 @@
           },
           store: { get: k => store.get('tl.' + k), set: (k, v) => store.set('tl.' + k, v) },
         });
-        const close = el('button', 'btn icon-btn tl-close');
+        const close = el('button', 'btn btn-quiet icon-btn tl-close');
         close.type = 'button';
         close.setAttribute('aria-label', 'Close the timeline');
         close.title = 'Close the timeline (T)';
@@ -1308,6 +1739,8 @@
       const sideOn = store.get('side');
       setSide(phone ? false : sideOn != null ? !!sideOn : true, true);
       if (timeline) setTimeline(!phone && !!store.get('timeline'), true);
+      const keyOpen = store.get('key');
+      setKeyOpen(phone ? false : keyOpen != null ? !!keyOpen : true, true);
       if (h.card) openCard(h.card.layer, h.card.id, {});
       bootBox.hidden = true;
       map.start();
@@ -1338,7 +1771,10 @@
     start();
   }
 
-  Object.assign(MV, { parseHash, buildHash, inZoom, zoomHint, viewBox, marksURL, changedLayers, rowsForFrame, emptyReason, tilesShown, isStale, tickAt, fmtAge });
+  Object.assign(MV, {
+    parseHash, buildHash, inZoom, zoomHint, viewBox, marksURL, changedLayers, rowsForFrame, emptyReason, tilesShown,
+    isStale, tickAt, fmtAge, fmtDayAt, fmtSourceTime, keyGroups, seenFromAnswers, findBpp, baseShown, fmtCount,
+  });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 
   if (typeof document !== 'undefined' && document.getElementById) {

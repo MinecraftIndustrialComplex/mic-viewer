@@ -103,6 +103,15 @@
   }
 
   /**
+   * The canvas filter a tile layer is drawn through: the layer's own `filter` (a CSS filter string,
+   * or false for none), else the map's `tileFilter`; 'none' when neither says anything.
+   */
+  function tileFilterFor(layer, mapFilter) {
+    const f = layer && layer.filter !== undefined && layer.filter !== null ? layer.filter : mapFilter;
+    return typeof f === 'string' && f.trim() ? f.trim() : 'none';
+  }
+
+  /**
    * The x offsets (0, +-period, ...) at which a thing spanning `x - pad .. x + pad` shows in the
    * east-west block range `[left, right]`. `[0]` without wrap (whether or not it is in view).
    */
@@ -125,6 +134,7 @@
     let pyramid = opts.pyramid || null;
     let extent = opts.extent || null;
     let background = opts.background || '#04060a';
+    let tileFilter = opts.tileFilter || null;
     const minBppOpt = opts.minBpp != null ? opts.minBpp : 1 / 4;
     const maxBppOpt = opts.maxBpp != null ? opts.maxBpp : null;
     const onView = opts.onView || null, onHover = opts.onHover || null;
@@ -279,6 +289,9 @@
       const px = ((pyr.T || T) * pyr.pixel(z)) / V.bpp;        // CSS px a tile
       const edge = Math.ceil(px * d + 0.5);
       ctx.globalAlpha = L.alpha != null ? L.alpha : 1;
+      // A muted base map: the tiles drawn through a CSS filter (where canvas filters exist).
+      const filter = tileFilterFor(L, tileFilter);
+      if (ctx.filter !== undefined) ctx.filter = filter;
       // Pixelated once a tile pixel is more than a screen pixel and a half.
       ctx.imageSmoothingEnabled = (px * d) / T < 1.75;
       for (const c of cover) {
@@ -305,6 +318,7 @@
         }
       }
       ctx.globalAlpha = 1;
+      if (ctx.filter !== undefined) ctx.filter = 'none';
     }
 
     function drawScaleBar() {
@@ -533,6 +547,12 @@
         background = c;
         dirty = true;
       },
+      /** A CSS filter the tiles are drawn through (`'saturate(0.3) brightness(1.08)'`), or null. */
+      setTileFilter(f) {
+        tileFilter = f || null;
+        dirty = true;
+      },
+      get tileFilter() { return tileFilter; },
       setScaleBar(o) {
         scaleBar = o === false ? null : Object.assign({ right: 12, bottom: 12 }, o || {});
         dirty = true;
@@ -594,6 +614,6 @@
     return api;
   }
 
-  Object.assign(MV, { T, wrap, niceStep, fmtInt, zoomFor, tileCover, tileInBounds, copiesIn, createMap });
+  Object.assign(MV, { T, wrap, niceStep, fmtInt, zoomFor, tileCover, tileInBounds, tileFilterFor, copiesIn, createMap });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 })();

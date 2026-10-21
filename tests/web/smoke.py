@@ -100,7 +100,7 @@ class Smoke:
           const c = document.getElementById('map');
           const g = c.getContext('2d');
           const d = g.getImageData(0, 0, c.width, c.height).data;
-          const bg = getComputedStyle(document.documentElement).getPropertyValue('--map-bg').trim();
+          const bg = getComputedStyle(document.documentElement).getPropertyValue('--map-paper').trim();
           const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(bg);
           const [r0, g0, b0] = m ? [1, 2, 3].map(i => parseInt(m[i], 16)) : [0, 0, 0];
           let ink = 0, left = 0, right = 0, n = 0;
@@ -168,7 +168,7 @@ def desktop(s, base):
     b.size(1440, 900)
     b.media(prefers_color_scheme="dark", prefers_reduced_motion="reduce")
     s.check(s.load(), "the page starts and settles")
-    s.check(b.eval("document.documentElement.dataset.theme === undefined && getComputedStyle(document.body).backgroundColor === 'rgb(7, 9, 13)'"),
+    s.check(b.eval("document.documentElement.dataset.theme === undefined && getComputedStyle(document.body).backgroundColor === 'rgb(18, 20, 23)'"),
             "the dark theme follows prefers-color-scheme")
     n = b.eval("document.querySelectorAll('#side .lrow[data-layer]').length")
     s.check(n == LAYERS, f"the layer panel lists {LAYERS} layers", n)
@@ -186,7 +186,7 @@ def desktop(s, base):
     # The theme toggle (a real click).
     b.click_selector("#btn-theme")
     time.sleep(0.2)
-    s.check(b.eval("document.documentElement.dataset.theme === 'light' && getComputedStyle(document.body).backgroundColor !== 'rgb(7, 9, 13)'"),
+    s.check(b.eval("document.documentElement.dataset.theme === 'light' && getComputedStyle(document.body).backgroundColor !== 'rgb(18, 20, 23)'"),
             "the theme toggle switches to light")
     s.check(b.eval("localStorage.getItem('micviewer.theme') === '\"light\"'"), "the theme is kept for this viewer")
     s.settle()

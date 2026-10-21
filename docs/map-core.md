@@ -19,6 +19,8 @@ const map = MicViewer.createMap({
   projection,          // docs/api.md §2.1: { period, zRange, latLon?, grid? }
   pyramid,             // docs/api.md §2.2, or null for no tiles (tile layers may bring their own)
   background: '#04060a',
+  tileFilter: null,    // a CSS filter every tile layer is drawn through, e.g. 'saturate(0.3)
+                       // brightness(1.08)' for a muted base map; null for none
   minBpp: 1 / 4,       // the closest zoom, blocks per CSS pixel (default 1/4: 4x magnification)
   maxBpp: null,        // the farthest; default: the period (a wrapping frame), 2x what fits `extent`
                        // (a flat world), else 4096
@@ -36,11 +38,13 @@ const map = MicViewer.createMap({
 map.setTiles([{ id, url: (z, x, y) => string, alpha: 1,
                 pyramid: null,   // this layer's own pyramid (default: the map's)
                 bounds: null,    // [x0, z0, x1, z1]: tiles outside are never asked for
+                filter: null,    // this layer's own CSS filter (false: none); null: the map's
                 visible: true }]);                        // bottom first; redraws
 map.setProjection(projection, pyramid, extent);           // a new frame or run; keeps the view,
                                // re-clamped, and reports that through onView: read any view
                                // you saved for the new frame before calling it
 map.setBackground(css); map.setScaleBar({ right, bottom, ink, halo } | false);
+map.setTileFilter(css | null); map.tileFilter   // the tiles' filter (see `tileFilter`), redraws
 map.setView(cx, cz, bpp);      // centre (blocks) and blocks per CSS pixel; clamped
 map.view                       // { cx, cz, bpp, w, h, dpr }
 map.projection; map.pyramid    // as set
@@ -73,6 +77,8 @@ empty, drawn as nothing and never asked again (no stand-in); a 404 is missing, n
 and an ancestor stands in; any other failure is asked again after 4 s. Drawn tiles go through an LRU
 of 420 with at most 8 loading; a tile not yet loaded borrows the nearest loaded ancestor up to 5
 levels up. Smoothing is off once a tile pixel covers 1.75 device pixels (magnified: crisp blocks).
+A tile filter goes through the canvas's `filter` (Chromium, Firefox, Safari 18); where the canvas has
+none the tiles are drawn as they are. Overlays are never filtered.
 
 The zoom drawn is the first (coarsest first) whose tile pixel is no wider than a device pixel times
 2^0.3, clamped to the pyramid; past the finest zoom the tiles are magnified (down to `minBpp`).
@@ -83,7 +89,8 @@ The zoom drawn is the first (coarsest first) whose tile pixel is no wider than a
 
 - map.js: `zoomFor(pyramid, blocksPerDevicePx)`, `tileCover(pyramid, z, left, top, widthBlocks,
   heightBlocks)` (the tiles to draw, with their block rectangles, wrapped indices `x` and unwrapped
-  columns `k`), `tileInBounds(pyramid, z, x, y, bounds)`, `copiesIn(x, pad, left, right, period)`,
+  columns `k`), `tileInBounds(pyramid, z, x, y, bounds)`, `tileFilterFor(layer, mapFilter)` (the
+  filter a tile layer is drawn through), `copiesIn(x, pad, left, right, period)`,
   `wrap(x, period)`, `niceStep(v)`, `fmtInt(v)`.
 - flat.js: `projectionFor(frame)`, `squarePyramid({min_zoom, max_zoom})`, `pyramidFor(tileLayer)`
   (square, or a kind a plug-in put in `MicViewer.pyramidKinds`), `tileUrl(template)`, and

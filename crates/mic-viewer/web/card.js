@@ -47,6 +47,15 @@
   }
 
   /**
+   * Whether a section's fields read better as a compact table than as a key and value list: many
+   * rows (a schedule, a cargo list), every label and value short.
+   */
+  function isCompact(fields) {
+    if (!Array.isArray(fields) || fields.length < 6) return false;
+    return fields.every(f => f && String(f.label || '').length <= 28 && fmtValue(f.value, f.unit).length <= 20);
+  }
+
+  /**
    * A sparkline of `points` (`[[x, y], ...]`) in a `w` x `h` box: the line's and the filled area's
    * SVG path data, and the extremes. Points are sorted by x; y grows downward on screen.
    */
@@ -78,26 +87,44 @@
     return e;
   }
 
+  /** A field's value into `cell`: a link that opens the linked card, or text. */
+  function fieldValue(cell, f, ctx) {
+    const text = fmtValue(f.value, f.unit);
+    if (f.link && ctx.onLink) {
+      const b = el('button', 'linkbtn', text);
+      b.type = 'button';
+      const target = ctx.layerOf ? ctx.layerOf(f.link.layer) : null;
+      b.title = `Open ${target ? target.label.toLowerCase() : f.link.layer} ${text}`;
+      b.addEventListener('click', () => ctx.onLink(f.link.layer, String(f.link.id)));
+      cell.appendChild(b);
+    } else {
+      cell.textContent = text;
+      if (typeof f.value === 'number') cell.classList.add('num');
+    }
+  }
+
   function fieldList(fields, ctx) {
     const dl = el('dl', 'kv');
     for (const f of fields || []) {
-      const dt = el('dt', null, f.label);
       const dd = el('dd');
-      const text = fmtValue(f.value, f.unit);
-      if (f.link && ctx.onLink) {
-        const b = el('button', 'linkbtn', text);
-        b.type = 'button';
-        const target = ctx.layerOf ? ctx.layerOf(f.link.layer) : null;
-        b.title = `Open ${target ? target.label.toLowerCase() : f.link.layer} ${text}`;
-        b.addEventListener('click', () => ctx.onLink(f.link.layer, String(f.link.id)));
-        dd.appendChild(b);
-      } else {
-        dd.textContent = text;
-        if (typeof f.value === 'number') dd.classList.add('num');
-      }
-      dl.append(dt, dd);
+      fieldValue(dd, f, ctx);
+      dl.append(el('dt', null, f.label), dd);
     }
     return dl;
+  }
+
+  function fieldTable(fields, ctx) {
+    const table = el('table', 'ctab');
+    const body = el('tbody');
+    for (const f of fields) {
+      const tr = el('tr');
+      const v = el('td', 'v');
+      fieldValue(v, f, ctx);
+      tr.append(el('td', null, f.label), v);
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    return table;
   }
 
   function sparkline(s, ctx) {
@@ -148,8 +175,11 @@
     const desc = ctx.layerOf ? ctx.layerOf(card.layer) : null;
     const head = el('header', 'card-head');
     const kicker = el('div', 'card-kicker');
-    const sw = el('span', 'swatch');
-    if (desc && desc.style) sw.style.background = desc.style.color;
+    let sw = desc && ctx.swatch ? ctx.swatch(desc) : null;
+    if (!sw) {
+      sw = el('span', 'swatch');
+      if (desc && desc.style) sw.style.background = desc.style.color;
+    }
     kicker.append(sw, el('span', null, desc ? desc.label : card.layer));
     const title = el('h2', 'card-title', card.title || `${card.layer} ${card.id}`);
     title.id = 'card-title';
@@ -175,7 +205,7 @@
     if (card.fields && card.fields.length) root.appendChild(fieldList(card.fields, ctx));
     for (const s of card.sections || []) {
       const sec = el('section', 'card-sec');
-      sec.append(el('h3', null, s.title), fieldList(s.fields, ctx));
+      sec.append(el('h3', null, s.title), isCompact(s.fields) ? fieldTable(s.fields, ctx) : fieldList(s.fields, ctx));
       root.appendChild(sec);
     }
     if (card.series && card.series.length) {
@@ -200,6 +230,6 @@
     return root;
   }
 
-  Object.assign(MV, { fmtNum, fmtValue, sparkPath, renderCard, renderCardState });
+  Object.assign(MV, { fmtNum, fmtValue, isCompact, sparkPath, renderCard, renderCardState });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 })();
