@@ -312,6 +312,10 @@ impl Graph {
 #[derive(Clone, Debug)]
 pub struct Placed {
     pub graph: usize,
+    /// The edge it is on (an index into the graph's `edges`) and how far along it from its `a`
+    /// node (0 to 1).
+    pub edge: u32,
+    pub t: f64,
     /// World position.
     pub at: V3,
     /// The heading along the edge (`Edge[0]` to `Edge[1]`), radians, 0 east, clockwise.
@@ -622,9 +626,116 @@ impl Rail {
         }
         let (a, _) = Loc::read(&e[0])?;
         let (b, _) = Loc::read(&e[1])?;
-        let (g, at, d) = self.point_on(a, b, f(p, "Position").unwrap_or(0.0))?;
+        let dist = f(p, "Position").unwrap_or(0.0);
+        let (g, at, d) = self.point_on(a, b, dist)?;
         let _ = graph;
-        Some(Placed { graph: g, at, heading: d[1].atan2(d[0]) })
+        let &(_, e, rev) = self.edge_at.get(&(a, b))?;
+        let l = self.graphs[g].edges[e as usize].len;
+        let t = (dist / if l > 0.0 { l } else { 1.0 }).clamp(0.0, 1.0);
+        Some(Placed { graph: g, at, heading: d[1].atan2(d[0]), edge: e, t: if rev { 1.0 - t } else { t } })
+    }
+
+    /// The way along the track from `from` to `to` (both on one network) as a line on the map,
+    /// the shortest a train could run: through a junction only the way the track goes on (no
+    /// turn sharper than a right angle), either way out of `from`. `None` when there is none.
+    pub fn route(&self, from: &Placed, to: &Placed) -> Option<Vec<[f64; 2]>> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        if from.graph != to.graph {
+            return None;
+        }
+        let g = &self.graphs[from.graph];
+        let edge = |k: u32| &g.edges[k as usize];
+        // Part of edge `k` from fraction `t0` to `t1` (either way), as a line.
+        let part = |k: u32, t0: f64, t1: f64| -> Vec<[f64; 2]> {
+            let e = edge(k);
+            let steps = if e.turn.is_some() { ((e.len * (t1 - t0).abs()).ceil() as usize).clamp(1, 128) } else { 1 };
+            (0..=steps)
+                .map(|i| {
+                    let p = e.at(&g.nodes, t0 + (t1 - t0) * i as f64 / steps as f64);
+                    [p[0], p[2]]
+                })
+                .collect()
+        };
+        if from.edge == to.edge {
+            return Some(part(from.edge, from.t, to.t));
+        }
+        let mut at: HashMap<u32, Vec<u32>> = HashMap::new();
+        for (k, e) in g.edges.iter().enumerate() {
+            if g.nodes[e.a as usize].loc.d == g.nodes[e.b as usize].loc.d {
+                at.entry(e.a).or_default().push(k as u32);
+                at.entry(e.b).or_default().push(k as u32);
+            }
+        }
+        let other = |k: u32, n: u32| if edge(k).a == n { edge(k).b } else { edge(k).a };
+        // Blocks from fraction `t` of edge `k` to its end at node `n`.
+        let to_end = |k: u32, t: f64, n: u32| edge(k).len * if edge(k).a == n { t } else { 1.0 - t };
+        // States: at a node, having come along an edge. Costs are kept in milli-blocks.
+        type State = (u32, u32);
+        let mut best: HashMap<State, (u64, Option<State>)> = HashMap::new();
+        let mut heap = BinaryHeap::new();
+        let fe = edge(from.edge);
+        for n in [fe.a, fe.b] {
+            let c = (to_end(from.edge, from.t, n) * 1000.0) as u64;
+            best.insert((n, from.edge), (c, None));
+            heap.push(Reverse((c, n, from.edge)));
+        }
+        let mut done: Option<(u64, (u32, u32))> = None;
+        while let Some(Reverse((c, n, came))) = heap.pop() {
+            if best.get(&(n, came)).is_some_and(|b| b.0 < c) {
+                continue;
+            }
+            if done.is_some_and(|(d, _)| d <= c) {
+                break;
+            }
+            let arriving = {
+                let l = edge(came).leaving(&g.nodes, n);
+                [-l[0], -l[1]]
+            };
+            for &k in at.get(&n).map(Vec::as_slice).unwrap_or_default() {
+                if k == came {
+                    continue;
+                }
+                let d = edge(k).leaving(&g.nodes, n);
+                if d[0] * arriving[0] + d[1] * arriving[1] <= 0.0 {
+                    continue;
+                }
+                if k == to.edge {
+                    let total = c + (to_end(k, to.t, n) * 1000.0) as u64;
+                    if done.is_none_or(|(d, _)| total < d) {
+                        done = Some((total, (n, came)));
+                    }
+                    continue;
+                }
+                let m = other(k, n);
+                let nc = c + (edge(k).len * 1000.0) as u64;
+                if best.get(&(m, k)).is_none_or(|b| nc < b.0) {
+                    best.insert((m, k), (nc, Some((n, came))));
+                    heap.push(Reverse((nc, m, k)));
+                }
+            }
+        }
+        let (_, last) = done?;
+        // The states back to the start: each is a node reached along an edge.
+        let mut chain = vec![last];
+        while let Some(&(_, Some(prev))) = best.get(chain.last()?) {
+            chain.push(prev);
+        }
+        chain.reverse();
+        let (n0, _) = chain[0];
+        let mut line = part(from.edge, from.t, if fe.a == n0 { 0.0 } else { 1.0 });
+        for w in chain.windows(2) {
+            let ((n, _), (_, k)) = (w[0], w[1]);
+            let mut p = edge(k).line(&g.nodes);
+            if edge(k).a != n {
+                p.reverse();
+            }
+            line.extend(p.into_iter().skip(1));
+        }
+        let (n, _) = *chain.last()?;
+        let te = edge(to.edge);
+        line.extend(part(to.edge, if te.a == n { 0.0 } else { 1.0 }, to.t).into_iter().skip(1));
+        Some(line)
     }
 
     /// A travelling point (`{Nodes: [loc, loc], Position}`) as a world position.
