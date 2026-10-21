@@ -1,0 +1,17 @@
+[package]
+name = "mic-viewer-surveyor"
+description = "Surveyor's server-side terrain summaries as a base map for the viewer: a reader, a renderer and a tile source"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MPL-2.0"
+publish = false
+repository = "https://github.com/MinecraftIndustrialComplex/mic-viewer"
+
+[dependencies]
+mic-viewer = { path = "../mic-viewer" }
+# Surveyor's files are gzip NBT. MIT OR Apache-2.0; mic-rtsim's lock pins this version already.
+flate2 = "1.1.10"
+
+[dev-dependencies]
+png = "0.18.1"

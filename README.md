@@ -15,6 +15,10 @@ The design is mic-rtsim's `VIEWER.md`; this repo is its §3.1.
   from Deep Time's workbench), `flat.js`, `marks.js`, `card.js`, `timeline.js`, `app.js`.
 - `crates/mic-viewer-demo`: a synthetic world served through the viewer, for the page's development,
   its screenshots and tests.
+- `crates/mic-viewer-surveyor`: Surveyor's server-side terrain summaries (`<dimension>/data/surveyor/`)
+  as a base map, one block a pixel: a bounded NBT reader, the region decoder (layout in mic-rtsim
+  VIEWER.md §9), the renderer and a `TileSource` for the square pyramid. Read only. mic-rtsim wires it
+  in at V5; `examples/render.rs` draws a world's map to one PNG.
 
 Consumers pin a commit: mic-rtsim's `rtsim-cli view` and `rtsim-cli run`, and Deep Time's
 `deeptime watch` (which vendors `crates/mic-viewer`, docs/choices-viewer.md VC4).
@@ -25,12 +29,17 @@ Consumers pin a commit: mic-rtsim's `rtsim-cli view` and `rtsim-cli run`, and De
 |---|---|---|
 | ![Light theme](docs/screenshots/desktop-light.png) | ![A village card and the timeline](docs/screenshots/card-timeline.png) | ![Phone width](docs/screenshots/phone.png) |
 
+| Surveyor base map, a server world at 4 blocks a pixel | The same at one block a pixel |
+|---|---|
+| ![A server world drawn from Surveyor's summaries](docs/screenshots/surveyor-overview.png) | ![Rivers, a village and a beach at one block a pixel](docs/screenshots/surveyor-detail.png) |
+
 ## Run the demo
 
 ```sh
 nix develop -c cargo run --release -p mic-viewer-demo            # http://127.0.0.1:8740/
 nix develop -c cargo run --release -p mic-viewer-demo -- --still  # a stopped clock
 nix develop -c cargo run --release -p mic-viewer-demo -- --stepped 2000 --every 700  # 2000 ticks a publish, the same every run
+nix develop -c cargo run --release -p mic-viewer-surveyor --example render -- <world> [dimension] [--zoom Z] --out map.png
 ```
 
 From another machine, forward the port: `ssh -L 8740:127.0.0.1:8740 <host>`, then open
