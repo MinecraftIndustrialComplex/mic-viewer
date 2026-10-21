@@ -263,10 +263,13 @@ pub fn rail_marks(rail: &Rail, dim: i32, w: &mut SceneWriter) {
         if rail.graphs[s.place.graph].dim != dim {
             continue;
         }
-        let mut m = Mark::point(uuid_text(&s.id), s.place.at[0], s.place.at[2])
-            .with_heading(s.place.heading)
-            .with_label(s.name.clone())
-            .with_ci(0);
+        let mut m =
+            Mark::point(uuid_text(&s.id), s.place.at[0], s.place.at[2]).with_heading(s.place.heading).with_ci(0);
+        // A station Create named for itself ("Track Station") says nothing on the map; its card
+        // and the search still have it.
+        if !matches!(s.name.as_str(), "Track Station" | "") {
+            m = m.with_label(s.name.clone());
+        }
         if standing.contains(&s.id) {
             m = m.with_ci(1).with_state("warn");
         }

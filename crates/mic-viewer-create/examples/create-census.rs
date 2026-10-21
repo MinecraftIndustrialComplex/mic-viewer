@@ -94,7 +94,10 @@ fn main() -> std::io::Result<()> {
         );
     }
     for s in rail.stations.iter().take(8) {
-        println!("  station {:?} at {:.0}, {:.0}, heading {:.2}", s.name, s.place.at[0], s.place.at[2], s.place.heading);
+        println!(
+            "  station {:?} at {:.0}, {:.0}, heading {:.2}",
+            s.name, s.place.at[0], s.place.at[2], s.place.heading
+        );
     }
     Ok(())
 }
