@@ -19,6 +19,12 @@ The design is mic-rtsim's `VIEWER.md`; this repo is its §3.1.
 Consumers pin a commit: mic-rtsim's `rtsim-cli view` and `rtsim-cli run`, and Deep Time's
 `deeptime watch` (which vendors `crates/mic-viewer`, docs/choices-viewer.md VC4).
 
+![The demo world in the dark theme: layers on the left, villages, roads, caravans and factions on the map](docs/screenshots/desktop-dark.png)
+
+| Light theme | A card and the timeline | Phone |
+|---|---|---|
+| ![Light theme](docs/screenshots/desktop-light.png) | ![A village card and the timeline](docs/screenshots/card-timeline.png) | ![Phone width](docs/screenshots/phone.png) |
+
 ## Run the demo
 
 ```sh
@@ -40,7 +46,7 @@ runs under a strict Content Security Policy. See docs/api.md §8.
 ```sh
 nix develop -c cargo test --workspace
 nix develop -c cargo clippy --workspace --all-targets -- -D warnings
-nix develop -c node --test tests/web/          # the page's pure functions
+nix develop -c node --test 'tests/web/*.test.js'   # the page's pure functions (node 24 needs the glob)
 nix develop -c python3 tests/web/smoke.py      # headless Chromium against the demo
 ```
 
