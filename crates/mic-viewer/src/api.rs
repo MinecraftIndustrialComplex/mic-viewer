@@ -400,6 +400,16 @@ impl Mark {
         Mark::Area { id, x: None, z: None, r: None, r#box: Some(b), ci: None, c: None, l: None }
     }
 
+    /// Sets the id that opens its card (no-op for kinds without one: cells, clusters, labels).
+    pub fn with_id(mut self, v: impl ToString) -> Mark {
+        match &mut self {
+            Mark::Point { id, .. } | Mark::Leg { id, .. } => *id = v.to_string(),
+            Mark::Path { id, .. } | Mark::Edge { id, .. } | Mark::Area { id, .. } => *id = Some(v.to_string()),
+            _ => {}
+        }
+        self
+    }
+
     /// Sets the legend index (no-op for kinds without one).
     pub fn with_ci(mut self, v: u16) -> Mark {
         match &mut self {
@@ -589,6 +599,10 @@ pub struct LayerMarks {
     pub shown: u64,
     pub clustered: bool,
     pub marks: Vec<Mark>,
+    /// Why the layer has nothing in this frame at all (a module the world does not run, a part
+    /// that failed to read), for the page's layer list. Absent when it has marks somewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub empty: Option<String>,
 }
 
 /// `/api/marks`.
@@ -633,6 +647,12 @@ impl Card {
 
     pub fn at(mut self, x: f64, z: f64) -> Card {
         self.at = Some([x, z]);
+        self
+    }
+
+    /// The game tick its fields are as of (a card built from a save says when that was).
+    pub fn as_of(mut self, t: Tick) -> Card {
+        self.as_of = Some(t);
         self
     }
 
@@ -868,6 +888,24 @@ mod tests {
         assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"k":"area","box":[0.0,0.0,16.0,32.0]}"#);
         let back: Mark = serde_json::from_str(r#"{"k":"edge","a":[0,0],"b":[3,4],"w":2}"#).unwrap();
         assert_eq!(back, Mark::edge([0.0, 0.0], [3.0, 4.0], 2.0));
+    }
+
+    #[test]
+    fn ids_cards_and_empty_layers() {
+        let e = Mark::edge([0.0, 0.0], [3.0, 4.0], 2.0).with_id("road-7");
+        assert_eq!(e.id(), Some("road-7"));
+        assert_eq!(Mark::point(1, 0.0, 0.0).with_id(9).id(), Some("9"));
+        assert_eq!(Mark::disc(None, 0.0, 0.0, 4.0).with_id("a").id(), Some("a"));
+        let label = Mark::Label { x: 0.0, z: 0.0, text: "x".into() };
+        assert_eq!(label.clone().with_id("no"), label, "a label has no id");
+        let c = Card::new("towns", 3, "Ashford").as_of(48_000);
+        assert_eq!(c.as_of, Some(48_000));
+        assert!(serde_json::to_string(&c).unwrap().contains(r#""as_of":48000"#));
+        // `empty` is left out unless there is a reason.
+        let lm = LayerMarks::default();
+        assert!(!serde_json::to_string(&lm).unwrap().contains("empty"));
+        let lm = LayerMarks { empty: Some("no ships module".into()), ..LayerMarks::default() };
+        assert!(serde_json::to_string(&lm).unwrap().contains(r#""empty":"no ships module""#));
     }
 
     #[test]

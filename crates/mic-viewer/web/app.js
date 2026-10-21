@@ -107,6 +107,12 @@
     return Object.keys(held || {}).filter(id => fv[id] != null && held[id] && fv[id] !== held[id].version);
   }
 
+  /** Why a shown layer has nothing (the marks answer's `empty`), or null: only for a layer that is
+   *  on, in its zoom range, and holds no marks at all. */
+  function emptyReason(on, hint, data) {
+    return on && !hint && data && data.empty && !data.total ? String(data.empty) : null;
+  }
+
   /** The stream `events` rows for the frame shown: a row without a frame is the first frame's. */
   function rowsForFrame(rows, frame, firstFrame) {
     return (rows || []).filter(r => (r.frame || firstFrame) === frame);
@@ -724,7 +730,10 @@
         } else {
           row.title = '';
           if (!on || !data) count.textContent = '';
-          else if (data.clustered) {
+          else if (emptyReason(on, hint, data)) {
+            count.textContent = 'empty';
+            count.title = data.empty;
+          } else if (data.clustered) {
             count.textContent = MV.compact(data.total);
             count.classList.add('clustered');
             count.title = `${fmtInt(data.total)} in view, grouped`;
@@ -734,6 +743,25 @@
           }
         }
         row.classList.toggle('nopast', A.t != null && on && !d.has_past);
+        const why = emptyReason(on, hint, data);
+        let note = row.querySelector('.lempty');
+        if (why) {
+          if (!note) {
+            note = el('p', 'lempty');
+            note.id = 'le-' + d.id.replace(/[^A-Za-z0-9_-]/g, '_');
+            const main = row.querySelector('.lrow-main');
+            row.insertBefore(note, main ? main.nextSibling : null);
+            const cb = row.querySelector('input');
+            cb.setAttribute('aria-describedby', [cb.getAttribute('aria-describedby'), note.id].filter(Boolean).join(' '));
+          }
+          note.textContent = why;
+        } else if (note) {
+          const cb = row.querySelector('input');
+          const rest = (cb.getAttribute('aria-describedby') || '').split(' ').filter(x => x && x !== note.id);
+          if (rest.length) cb.setAttribute('aria-describedby', rest.join(' '));
+          else cb.removeAttribute('aria-describedby');
+          note.remove();
+        }
       }
       for (const row of document.querySelectorAll('.lrow[data-tiles]')) {
         const on = A.tilesOn.has(row.dataset.tiles);
@@ -1310,7 +1338,7 @@
     start();
   }
 
-  Object.assign(MV, { parseHash, buildHash, inZoom, zoomHint, viewBox, marksURL, changedLayers, rowsForFrame, tilesShown, isStale, tickAt, fmtAge });
+  Object.assign(MV, { parseHash, buildHash, inZoom, zoomHint, viewBox, marksURL, changedLayers, rowsForFrame, emptyReason, tilesShown, isStale, tickAt, fmtAge });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 
   if (typeof document !== 'undefined' && document.getElementById) {

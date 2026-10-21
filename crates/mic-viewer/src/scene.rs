@@ -31,6 +31,8 @@ pub fn region_of(x: f64, z: f64) -> RegionKey {
 pub struct LayerRows {
     /// Changes when the marks change (a hash of them), so the page refetches only what moved.
     pub version: u64,
+    /// Why the layer has no marks, when it has none (`/api/marks` passes it on as `empty`).
+    pub empty: Option<String>,
     marks: Vec<Mark>,
     /// Region -> indices of the marks whose box touches it.
     by_region: HashMap<RegionKey, Vec<u32>>,
@@ -62,6 +64,16 @@ impl LayerRows {
         }
         rows.marks = marks;
         rows
+    }
+
+    /// No marks, and why: a module the world does not run, a part that failed to read.
+    pub fn empty_because(reason: impl Into<String>) -> LayerRows {
+        let reason = reason.into();
+        LayerRows {
+            version: version_of(&[Mark::Label { x: 0.0, z: 0.0, text: reason.clone() }]),
+            empty: Some(reason),
+            ..LayerRows::default()
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -166,6 +178,7 @@ impl Scene {
 #[derive(Default)]
 pub struct SceneWriter {
     layers: BTreeMap<String, Vec<Mark>>,
+    empty: BTreeMap<String, String>,
 }
 
 impl SceneWriter {
@@ -187,8 +200,26 @@ impl SceneWriter {
         self.layers.entry(layer.to_owned()).or_default();
     }
 
-    pub fn finish(self, t: Tick, period_x: f64) -> Scene {
-        Scene { t, period_x, layers: self.layers.into_iter().map(|(k, v)| (k, LayerRows::from_marks(v))).collect() }
+    /// Declares a layer with no marks and says why (the page shows the reason in its layer list).
+    /// A mark for the layer later wins: a layer with marks has no reason to be empty.
+    pub fn empty(&mut self, layer: &str, reason: impl Into<String>) {
+        self.layer(layer);
+        self.empty.insert(layer.to_owned(), reason.into());
+    }
+
+    pub fn finish(mut self, t: Tick, period_x: f64) -> Scene {
+        let layers = self
+            .layers
+            .into_iter()
+            .map(|(k, v)| {
+                let rows = match self.empty.remove(&k) {
+                    Some(why) if v.is_empty() => LayerRows::empty_because(why),
+                    _ => LayerRows::from_marks(v),
+                };
+                (k, rows)
+            })
+            .collect();
+        Scene { t, period_x, layers }
     }
 }
 
@@ -248,5 +279,24 @@ mod tests {
         assert_eq!(version_of(&a), version_of(&a.clone()));
         assert_ne!(version_of(&a), version_of(&b));
         assert!(version_of(&b) < 1 << 53);
+    }
+
+    #[test]
+    fn an_empty_layer_says_why_until_it_has_marks() {
+        let mut w = SceneWriter::new();
+        w.empty("dragons", "no dragons module in this save");
+        w.empty("ships", "the ships part failed to read");
+        w.mark("ships", Mark::point("s", 0.0, 0.0));
+        w.layer("herds");
+        let s = w.finish(0, 0.0);
+        assert_eq!(s.layers["dragons"].empty.as_deref(), Some("no dragons module in this save"));
+        assert!(s.layers["dragons"].is_empty());
+        assert_eq!(s.layers["ships"].empty, None, "a mark wins over the reason");
+        assert_eq!(s.layers["ships"].len(), 1);
+        assert_eq!(s.layers["herds"].empty, None);
+        // A new reason is a new version: the page refetches and shows it.
+        let other = LayerRows::empty_because("another reason");
+        assert_ne!(other.version, s.layers["dragons"].version);
+        assert_ne!(s.layers["herds"].version, s.layers["dragons"].version);
     }
 }

@@ -63,10 +63,11 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
             shown: total,
             clustered: false,
             marks: marks.into_iter().cloned().collect(),
+            empty: None,
         };
     }
     if share == 0 {
-        return LayerMarks { version: 0, total, shown: 0, clustered: false, marks: Vec::new() };
+        return LayerMarks { version: 0, total, shown: 0, clustered: false, marks: Vec::new(), empty: None };
     }
     // A shape smaller than a bin is a dot at this zoom: it bins like a point.
     let bin_blocks = BIN_PX * bpp;
@@ -129,7 +130,7 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
             cell *= 2.0;
         }
     }
-    LayerMarks { version: 0, total, shown, clustered, marks: out_marks }
+    LayerMarks { version: 0, total, shown, clustered, marks: out_marks, empty: None }
 }
 
 /// What a mark counts for in a cluster (a cluster from a source counts its own `n`).

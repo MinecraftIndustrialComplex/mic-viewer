@@ -146,6 +146,16 @@ test('rowsForFrame: stream rows go to their frame, a row without one to the firs
   assert.deepEqual(MV.rowsForFrame(undefined, 'over', 'over'), []);
 });
 
+test('emptyReason: only a shown layer in zoom with no marks at all', () => {
+  const why = { total: 0, shown: 0, marks: [], empty: 'no ships module in this save' };
+  assert.equal(MV.emptyReason(true, null, why), 'no ships module in this save');
+  assert.equal(MV.emptyReason(false, null, why), null);
+  assert.equal(MV.emptyReason(true, 'in', why), null);
+  assert.equal(MV.emptyReason(true, null, { ...why, total: 3 }), null);
+  assert.equal(MV.emptyReason(true, null, { total: 0 }), null);
+  assert.equal(MV.emptyReason(true, null, undefined), null);
+});
+
 test('tilesShown: saved choice, then default_on, then the first base map and every overlay', () => {
   const tiles = [{ id: 'a' }, { id: 'b' }, { id: 'o', overlay: true }, { id: 'p', overlay: true, default_on: false },
     { id: 'c', default_on: true }];

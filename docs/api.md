@@ -138,9 +138,11 @@ A tile request outside `bounds` is never made. A tile with nothing in it answers
 }
 ```
 
-The server returns at most `budget` marks in all (2,000), shared among the asked layers by priority.
-A layer with more marks in view than its share is binned on a 32 px screen grid and answered with
-`cluster` marks (`clustered: true`). Marks (short keys keep the answers small):
+The server returns at most `budget` marks in all (2,000; a backend may set its own, and
+`/api/world` says it), shared among the asked layers by priority. A layer with more marks in view
+than its share is binned on a 32 px screen grid and answered with `cluster` marks (`clustered:
+true`). A layer with nothing in the frame at all may say why in `empty` (`"empty": "no ships module
+in this save"`); the page shows it under the layer's name. Marks (short keys keep the answers small):
 
 | `k` | Fields | Drawn as |
 |---|---|---|
@@ -208,7 +210,9 @@ described once in `/api/world` `event_kinds`.
 
 ## 7. `/api/stream`
 
-Server-sent events, `retry: 2000`, a comment every 15 s:
+Server-sent events, `retry: 2000`, a comment every 15 s. A backend that never publishes (a save, a
+still demo) answers 204, which tells the page's EventSource not to retry; its `/api/world` says
+`"stream": false` and the page does not ask.
 
 - `hello`: the `/api/world` answer.
 - `frame`: `{"t": <tick>, "time": {...}, "freshness": {...}, "versions": {"<layer>": <version>},

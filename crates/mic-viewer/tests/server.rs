@@ -206,3 +206,63 @@ fn the_stream_says_hello_then_each_publication() {
     assert!(v["frames"]["f"]["dots"].as_u64().is_some());
     server.stop();
 }
+
+/// A save viewer's backend: it never publishes, has a smaller budget and a layer empty for a reason.
+struct Still;
+
+impl Backend for Still {
+    fn world(&self) -> WorldInfo {
+        WorldInfo {
+            name: "still".into(),
+            source: "save".into(),
+            frames: vec![Frame { id: "f".into(), label: "F".into(), ..Frame::default() }],
+            budget: 300,
+            ..WorldInfo::default()
+        }
+    }
+    fn budget(&self) -> usize {
+        300
+    }
+    fn layers(&self) -> Arc<Layers> {
+        Arc::new(Layers {
+            groups: vec![],
+            layers: vec![
+                LayerDesc::new("dots", "g", "Dots", "point", "#fff"),
+                LayerDesc::new("ships", "g", "Ships", "point", "#fff"),
+            ],
+        })
+    }
+    fn scene(&self, frame: &str, _t: Option<Tick>) -> Option<Arc<Scene>> {
+        let mut w = SceneWriter::new();
+        for i in 0..10_000 {
+            w.mark("dots", Mark::point(i, (i % 100) as f64, (i / 100) as f64));
+        }
+        w.empty("ships", "no ships module in this save");
+        (frame == "f").then(|| Arc::new(w.finish(5, 0.0)))
+    }
+    fn card(&self, _layer: &str, _id: &str, _t: Option<Tick>) -> Option<Card> {
+        None
+    }
+}
+
+#[test]
+fn a_backend_that_never_publishes_has_no_stream_and_keeps_its_budget() {
+    let app = Arc::new(App::new(Arc::new(Still)));
+    let mut server = Server::start("127.0.0.1:0".parse().unwrap(), Config::default(), app).unwrap();
+    let addr = server.addr().unwrap();
+    // 204: EventSource stops, and no connection thread waits on pings.
+    let (st, _, body) = ask(addr, "GET", "/api/stream", "localhost");
+    assert_eq!(st, 204);
+    assert!(body.is_empty());
+    let (st, _, body) =
+        ask(addr, "GET", "/api/marks?frame=f&x0=0&z0=0&x1=100&z1=100&bpp=1&layers=dots,ships", "localhost");
+    assert_eq!(st, 200);
+    let a: MarksAnswer = serde_json::from_slice(&body).unwrap();
+    let total: usize = a.layers.values().map(|l| l.marks.len()).sum();
+    assert!(total <= 300, "the backend's own budget: {total}");
+    assert!(a.layers["dots"].clustered);
+    assert_eq!(a.layers["dots"].empty, None);
+    assert_eq!(a.layers["ships"].empty.as_deref(), Some("no ships module in this save"));
+    assert_eq!(a.layers["ships"].total, 0);
+    server.stop();
+}

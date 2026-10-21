@@ -12,7 +12,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::aggregate;
-use crate::api::{Card, EventsAnswer, Histogram, LayerMarks, Layers, MarksAnswer, Tick, WorldInfo};
+use crate::api::{Card, EventsAnswer, Histogram, LayerMarks, Layers, MARK_BUDGET, MarksAnswer, Tick, WorldInfo};
 use crate::assets;
 use crate::http::{Handler, NO_CACHE, Reply, Request, Response, VIEWER_CSP};
 use crate::scene::Scene;
@@ -48,6 +48,11 @@ pub const MAX_BUCKETS: usize = 1_000;
 pub trait Backend: Send + Sync + 'static {
     /// `/api/world`.
     fn world(&self) -> WorldInfo;
+    /// The marks one `/api/marks` answer holds at most (VIEWER.md §6). `world().budget` should say
+    /// the same: the page reads it there.
+    fn budget(&self) -> usize {
+        MARK_BUDGET
+    }
     /// `/api/layers`.
     fn layers(&self) -> Arc<Layers>;
     /// The frame's marks as of `t` (None: now). None for a frame it does not know, or a past it
@@ -180,13 +185,16 @@ impl<B: Backend> App<B> {
             .map(|(id, _)| scene.layers.get(*id).map(|r| r.in_box(b, scene.period_x)).unwrap_or_default())
             .collect();
         let needs: Vec<usize> = found.iter().map(Vec::len).collect();
-        let budget = self.backend.world().budget.max(1);
+        let budget = self.backend.budget().max(1);
         let shares = aggregate::share(budget, &needs);
         let at = t.unwrap_or(scene.t);
         let mut out = BTreeMap::new();
         for (((id, _), marks), share) in layers.iter().zip(found).zip(shares) {
             let mut lm: LayerMarks = aggregate::reduce(marks, share, bpp, at);
-            lm.version = scene.layers.get(*id).map_or(0, |r| r.version);
+            if let Some(r) = scene.layers.get(*id) {
+                lm.version = r.version;
+                lm.empty = r.empty.clone().filter(|_| r.is_empty());
+            }
             out.insert((*id).to_owned(), lm);
         }
         Response::json_of(&MarksAnswer { t: at, frame, layers: out })
@@ -210,6 +218,11 @@ impl<B: Backend> App<B> {
     }
 
     fn stream(&self) -> Reply {
+        // A backend that never publishes has nothing to stream: 204 tells EventSource not to come
+        // back, and no connection thread waits forever on pings.
+        if self.backend.changes().is_none() {
+            return Response::no_content().into();
+        }
         let backend = Arc::clone(&self.backend);
         let streams = Arc::clone(&self.streams);
         Reply::Stream(Box::new(move |w| {
@@ -231,11 +244,7 @@ impl<B: Backend> App<B> {
             let world = backend.world();
             w.send("hello", &serde_json::to_string(&world).unwrap_or_default())?;
             let (Some(changes), Some(mut seen)) = (backend.changes(), seen.take()) else {
-                // Nothing ever changes: keep the stream (the page's sign of a live server) with pings.
-                loop {
-                    std::thread::sleep(PING);
-                    w.ping()?;
-                }
+                return Ok(());
             };
             loop {
                 let now = changes.wait(seen, PING);
