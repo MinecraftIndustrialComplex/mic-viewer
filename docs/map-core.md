@@ -37,8 +37,10 @@ map.setTiles([{ id, url: (z, x, y) => string, alpha: 1,
                 pyramid: null,   // this layer's own pyramid (default: the map's)
                 bounds: null,    // [x0, z0, x1, z1]: tiles outside are never asked for
                 visible: true }]);                        // bottom first; redraws
-map.setProjection(projection, pyramid, extent);           // a new frame or run
-map.setBackground(css); map.setScaleBar({ right, bottom } | false);
+map.setProjection(projection, pyramid, extent);           // a new frame or run; keeps the view,
+                               // re-clamped, and reports that through onView: read any view
+                               // you saved for the new frame before calling it
+map.setBackground(css); map.setScaleBar({ right, bottom, ink, halo } | false);
 map.setView(cx, cz, bpp);      // centre (blocks) and blocks per CSS pixel; clamped
 map.view                       // { cx, cz, bpp, w, h, dpr }
 map.projection; map.pyramid    // as set
