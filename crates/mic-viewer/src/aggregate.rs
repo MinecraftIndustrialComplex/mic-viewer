@@ -75,7 +75,10 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
     // A shape smaller than a bin is a dot at this zoom: it bins like a point.
     let bin_blocks = BIN_PX * bpp;
     let (movable, fixed): (Vec<&Mark>, Vec<&Mark>) = marks.into_iter().partition(|m| {
-        matches!(m, Mark::Point { .. } | Mark::Leg { .. } | Mark::Train { .. } | Mark::Cluster { .. } | Mark::Label { .. }) || {
+        matches!(
+            m,
+            Mark::Point { .. } | Mark::Leg { .. } | Mark::Train { .. } | Mark::Cluster { .. } | Mark::Label { .. }
+        ) || {
             let b = m.bbox();
             !matches!(m, Mark::Cell { .. }) && (b[2] - b[0]).max(b[3] - b[1]) < bin_blocks
         }

@@ -1091,6 +1091,7 @@ impl Backend for Demo {
                     label: "Overworld".into(),
                     projection: ProjectionDesc::flat(),
                     bounds: [-HALF, -HALF, HALF, HALF],
+                    home: None,
                     tiles: vec![terrain],
                 },
                 Frame {
@@ -1098,6 +1099,7 @@ impl Backend for Demo {
                     label: "Ring (wraps east to west)".into(),
                     projection: ProjectionDesc::xwrap(RING_PERIOD, Some([-RING_HALF_Z, RING_HALF_Z])),
                     bounds: [-RING_PERIOD / 2.0, -RING_HALF_Z, RING_PERIOD / 2.0, RING_HALF_Z],
+                    home: None,
                     tiles: Vec::new(),
                 },
             ],

@@ -200,7 +200,12 @@
       setView(bx - (px - V.w / 2) * bpp, bz - (py - V.h / 2) * bpp, bpp);
     }
 
-    function home() {
+    function home(box) {
+      // A flat frame may name where it opens (its built-up part), inside its extent.
+      if (box && !(P() > 0) && box[2] > box[0] && box[3] > box[1]) {
+        setView((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, fitBpp(box) * 1.06);
+        return;
+      }
       const e = ext();
       if (P() > 0) {
         const cx = e ? (e[0] + e[2]) / 2 : 0;
@@ -565,9 +570,10 @@
       get projection() { return projection; },
       get pyramid() { return pyramid; },
       get cursor() { return cursor ? cursor.slice() : null; },
-      home() {
+      /** Fits the frame's extent, or `box` (`[x0, z0, x1, z1]`, a flat frame's) when given. */
+      home(box) {
         resize();
-        home();
+        home(box || null);
       },
       zoomAt,
       toWorld,

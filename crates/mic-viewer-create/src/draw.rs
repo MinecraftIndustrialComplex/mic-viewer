@@ -143,7 +143,10 @@ pub fn layer_descs() -> Vec<LayerDesc> {
             .line("belt")
             .zoom(0.0, SITE_BPP)
             .priority(55)
-            .legend_entries(vec![LegendEntry::new("Belt", "ink").line("belt")]),
+            .legend_entries(vec![
+                LegendEntry::new("Belt, chevrons the way it runs", "ink").line("belt"),
+                LegendEntry::new("Belt, stopped", "ink2").line("belt"),
+            ]),
         LayerDesc::new(PORTS, "Logistics", "Package addresses", "point", AMBER)
             .describe("Frogports, packagers, postboxes and requesters, with the addresses they send to or take.")
             .glyph("port", 6.0)
@@ -469,9 +472,8 @@ pub fn block_marks(things: &[Thing], dim: &str, w: &mut SceneWriter) {
                     if n > 0 {
                         m = m.with_count(n);
                     }
-                    if !t.running() {
-                        m = m.with_color(SMALL_NETWORK);
-                    }
+                    // The key's entries: turning, or not.
+                    m = m.with_ci(if t.running() { 0 } else { 1 });
                     w.mark(CHAINS, m);
                 }
             }
@@ -524,9 +526,9 @@ pub fn block_marks(things: &[Thing], dim: &str, w: &mut SceneWriter) {
                 r.reverse();
                 m = Mark::path(r).with_id(block_id(ctl, dim));
             }
-            m = m.with_arrows();
+            m = m.with_arrows().with_ci(0);
         } else {
-            m = m.with_color("ink2");
+            m = m.with_ci(1);
         }
         w.mark(BELTS, m);
     }

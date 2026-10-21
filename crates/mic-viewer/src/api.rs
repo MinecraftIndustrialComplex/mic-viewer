@@ -58,6 +58,10 @@ pub struct Frame {
     pub projection: ProjectionDesc,
     /// `[x0, z0, x1, z1]` where the frame has content.
     pub bounds: [f64; 4],
+    /// `[x0, z0, x1, z1]` the page opens on, inside `bounds`: the built-up part, when the base
+    /// maps run far wider. None opens on `bounds`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<[f64; 4]>,
     #[serde(default)]
     pub tiles: Vec<TileLayerDesc>,
 }
@@ -495,7 +499,19 @@ pub enum Mark {
 impl Mark {
     /// A point with only its id and place.
     pub fn point(id: impl ToString, x: f64, z: f64) -> Mark {
-        Mark::Point { id: id.to_string(), x, z, ci: None, c: None, g: None, s: None, l: None, ring: false, a: None, st: None }
+        Mark::Point {
+            id: id.to_string(),
+            x,
+            z,
+            ci: None,
+            c: None,
+            g: None,
+            s: None,
+            l: None,
+            ring: false,
+            a: None,
+            st: None,
+        }
     }
 
     /// A straight leg.
@@ -508,7 +524,18 @@ impl Mark {
     }
 
     pub fn disc(id: Option<String>, x: f64, z: f64, r: f64) -> Mark {
-        Mark::Area { id, x: Some(x), z: Some(z), r: Some(r), r#box: None, ci: None, c: None, l: None, rings: None, st: None }
+        Mark::Area {
+            id,
+            x: Some(x),
+            z: Some(z),
+            r: Some(r),
+            r#box: None,
+            ci: None,
+            c: None,
+            l: None,
+            rings: None,
+            st: None,
+        }
     }
 
     pub fn rect(id: Option<String>, b: [f64; 4]) -> Mark {
@@ -529,7 +556,18 @@ impl Mark {
         if !b[0].is_finite() {
             b = [0.0; 4];
         }
-        Mark::Area { id, x: None, z: None, r: None, r#box: Some(b), ci: None, c: None, l: None, rings: Some(rings), st: None }
+        Mark::Area {
+            id,
+            x: None,
+            z: None,
+            r: None,
+            r#box: Some(b),
+            ci: None,
+            c: None,
+            l: None,
+            rings: Some(rings),
+            st: None,
+        }
     }
 
     /// A train of `cars` (see [`Mark::Train`]).

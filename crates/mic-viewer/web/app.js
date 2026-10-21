@@ -1251,7 +1251,7 @@
     $('zoom-out').addEventListener('click', () => map.zoomAt(map.view.w / 2, map.view.h / 2, 0.5));
     $('zoom-home').addEventListener('click', () => {
       cancelFlight();
-      map.home();
+      map.home(A.frameDesc ? A.frameDesc.home : null);
     });
 
     function layoutChanged() {
@@ -1634,7 +1634,7 @@
       map.setProjection(proj, base || MV.squarePyramid({}), f.bounds || null);
       map.setTiles(list);
       if (view && view.x != null && view.z != null) map.setView(view.x, view.z, view.bpp || map.view.bpp);
-      else map.home();
+      else map.home(f.home || null);
       $('frame').value = f.id;
       buildPanel();
       updateReadout();

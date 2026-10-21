@@ -67,7 +67,9 @@ Query numbers are decimal; `layers` and `kinds` are comma-separated ids. A missi
   with `period_x` blocks; x runs over `[-period_x/2, period_x/2)`), or `plugin` (a projection
   supplied by a plug-in script: `{"kind": "plugin", "script": "plugins/deeptime/projection.js",
   "factory": "...", "args": {...}}`, for Deep Time worlds). `z_range` is `[zmin, zmax]` or null.
-- `bounds` `[x0, z0, x1, z1]`: where the frame has content; "home" fits it.
+- `bounds` `[x0, z0, x1, z1]`: where the frame has content; the view never strays far outside it.
+- `home` `[x0, z0, x1, z1]`, optional: what the page opens on and "home" fits, inside `bounds` (the
+  built-up part, when the base maps run far wider). Absent: `bounds`.
 - `tiles`: the frame's base maps. Optional on each: `default_on` (shown when the viewer has saved no
   choice; without it the page shows the first base map and every overlay) and `alpha` (opacity 0 to
   1; without it opaque).
