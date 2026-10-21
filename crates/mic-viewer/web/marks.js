@@ -989,7 +989,9 @@
                 drawTrainShape(ctx, cars, c, th, m.st, h, hw, ext);
                 if (m.id != null && cards) targets.push({ kind: 'train', layer: lid, id: String(m.id), label: m.l, pts: flat, w: 2 * hw, x: front[0], y: front[1], order });
               }
-              if (m.l && showLabels) labels.push({ kind: 'pt', x: front[0], y: front[1], r: r + 2, text: m.l, pri: pri + 1 });
+              // Ahead of the train first, so the name never covers its carriages.
+              const ahead = Math.abs(ux) >= Math.abs(uy) ? (ux > 0 ? 0 : 1) : (uy > 0 ? 2 : 3);
+              if (m.l && showLabels) labels.push({ kind: 'pt', x: front[0] + ux * ext, y: front[1] + uy * ext, r: r + 2, text: m.l, pri: pri + 1, prefer: ahead });
               note(m);
               drawn++;
               break;
@@ -1210,6 +1212,8 @@
         const cands = [
           [L.x + g, L.y, 'left'], [L.x - g, L.y, 'right'], [L.x, L.y + g + th2 / 2, 'center'], [L.x, L.y - g - th2 / 2, 'center'],
         ];
+        // `prefer`: the side tried first (0 right, 1 left, 2 below, 3 above).
+        if (L.prefer > 0) cands.unshift(cands.splice(L.prefer, 1)[0]);
         for (const [x, y, align] of cands) {
           const x0 = align === 'left' ? x : align === 'right' ? x - tw : x - tw / 2;
           const b = [x0 - 2, y - th2 / 2, x0 + tw + 2, y + th2 / 2];

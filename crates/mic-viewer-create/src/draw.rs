@@ -42,6 +42,8 @@ const NAMED_NETWORK_LENGTH: f64 = 200.0;
 /// Zoom bands (blocks per CSS pixel).
 pub const SITE_BPP: f64 = 2.0;
 pub const TOWN_BPP: f64 = 16.0;
+/// Signals draw closer than this.
+pub const SIGNAL_BPP: f64 = 0.75;
 
 /// The layer descriptions, rail first.
 pub fn layer_descs() -> Vec<LayerDesc> {
@@ -71,7 +73,8 @@ pub fn layer_descs() -> Vec<LayerDesc> {
         LayerDesc::new(SIGNALS, "Rail", "Signals", "point", GOOD)
             .describe("Signals, in their state as saved.")
             .glyph("signal", 6.0)
-            .zoom(0.0, SITE_BPP)
+            // Closer than a town: a junction's signals are noise any further out.
+            .zoom(0.0, SIGNAL_BPP)
             .priority(40)
             .legend_entries(vec![
                 LegendEntry::new("Signal: clear", GOOD).glyph("signal"),
@@ -82,7 +85,8 @@ pub fn layer_descs() -> Vec<LayerDesc> {
             .describe("Trains where they are: a box for each carriage, the leading one pointed the way it runs.")
             .kinds(&["train"])
             .priority(90)
-            .labels_below(4.0)
+            // Station names first; trains' names once a yard is apart.
+            .labels_below(1.5)
             .legend_entries(vec![
                 LegendEntry::new("Train running", "ink").glyph("train"),
                 LegendEntry::new("Train standing", "ink").glyph("train").st("off"),
@@ -125,11 +129,12 @@ pub fn layer_descs() -> Vec<LayerDesc> {
             .describe("Chain conveyor routes between pulleys, with the packages on them.")
             .kinds(&["path"])
             .line("chain")
-            .width(1.5)
+            .width(2.5)
             .zoom(0.0, TOWN_BPP)
             .priority(70)
             .legend_entries(vec![
                 LegendEntry::new("Chain conveyor", AMBER).line("chain"),
+                LegendEntry::new("Chain conveyor, not turning", SMALL_NETWORK).line("chain"),
                 LegendEntry::new("Packages on it", AMBER).glyph("dot"),
             ]),
         LayerDesc::new(BELTS, "Logistics", "Belts", "path", "ink")
@@ -280,7 +285,11 @@ pub fn rail_marks(rail: &Rail, dim: i32, w: &mut SceneWriter) {
             continue;
         }
         let (_, st) = train_doing(rail, t);
-        let mut m = Mark::train(uuid_text(&t.id), t.cars.clone()).with_label(t.name.clone());
+        let mut m = Mark::train(uuid_text(&t.id), t.cars.clone());
+        // Create's default names say nothing on the map (the card still has them).
+        if !matches!(t.name.as_str(), "Unnamed Train" | "Unnamed" | "") {
+            m = m.with_label(t.name.clone());
+        }
         m = match st {
             Some("bad") => m.with_ci(2).with_state("bad"),
             Some(s) => m.with_ci(1).with_state(s),
