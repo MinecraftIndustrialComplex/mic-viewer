@@ -166,3 +166,13 @@ test('pyramidFor knows square and registered kinds', () => {
 test('tileUrl fills a template', () => {
   assert.equal(MV.tileUrl('tiles/terrain/{z}/{x}/{y}.png')(-3, -2, 5), 'tiles/terrain/-3/-2/5.png');
 });
+
+test('tileFilterFor: the layer\'s own filter, else the map\'s; false or blank is none', () => {
+  assert.equal(MV.tileFilterFor({}, null), 'none');
+  assert.equal(MV.tileFilterFor({}, 'saturate(0.3)'), 'saturate(0.3)');
+  assert.equal(MV.tileFilterFor({ filter: null }, ' grayscale(1) '), 'grayscale(1)');
+  assert.equal(MV.tileFilterFor({ filter: false }, 'saturate(0.3)'), 'none');
+  assert.equal(MV.tileFilterFor({ filter: 'blur(1px)' }, 'saturate(0.3)'), 'blur(1px)');
+  assert.equal(MV.tileFilterFor({ filter: '' }, 'saturate(0.3)'), 'none');
+  assert.equal(MV.tileFilterFor(null, ''), 'none');
+});

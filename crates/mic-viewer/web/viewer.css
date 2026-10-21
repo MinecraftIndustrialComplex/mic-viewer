@@ -74,7 +74,7 @@
     --map-bad: #d1242f;
     --map-warn: #b7791f;
     --map-off: #8b949e;
-    --map-mute: saturate(0.3) brightness(1.1) contrast(0.82);
+    --map-mute: saturate(0.45) contrast(0.55) brightness(1.4);
     color-scheme: light;
   }
 }
@@ -108,7 +108,7 @@
   --map-bad: #d1242f;
   --map-warn: #b7791f;
   --map-off: #8b949e;
-  --map-mute: saturate(0.3) brightness(1.1) contrast(0.82);
+  --map-mute: saturate(0.45) contrast(0.55) brightness(1.4);
   color-scheme: light;
 }
 
@@ -209,7 +209,7 @@ button, select, input { font: inherit; color: inherit; }
 .source.down .src-fresh { color: var(--danger); }
 .frame-pick { display: flex; min-width: 0; flex: none; }
 .select {
-  height: 28px; max-width: 220px; min-width: 0; padding: 0 24px 0 8px;
+  height: 28px; max-width: 170px; min-width: 0; padding: 0 24px 0 8px;
   border-radius: 3px; border: 1px solid var(--line-2); background-color: var(--bg-1);
   cursor: pointer; text-overflow: ellipsis;
 }
@@ -238,7 +238,7 @@ button, select, input { font: inherit; color: inherit; }
 .find-q:focus { outline: 2px solid var(--focus); outline-offset: -1px; }
 .find .icon { position: absolute; left: 8px; top: 6px; color: var(--fg-3); pointer-events: none; }
 .find-list {
-  position: absolute; top: 32px; left: 0; right: 0; z-index: 30;
+  position: absolute; top: 32px; left: 0; width: max(100%, 340px); z-index: 30;
   max-height: min(420px, calc(100vh - 80px)); overflow-y: auto; padding: 3px;
   background: var(--bg-1); border: 1px solid var(--line-2); border-radius: 3px;
 }
@@ -248,7 +248,7 @@ button, select, input { font: inherit; color: inherit; }
 }
 .find-opt[aria-selected="true"], .find-opt:hover { background: var(--bg-2); }
 .find-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.find-kind { color: var(--fg-3); font-size: 12px; white-space: nowrap; }
+.find-kind { max-width: 160px; overflow: hidden; text-overflow: ellipsis; color: var(--fg-3); font-size: 12px; white-space: nowrap; }
 .find-none { padding: 6px 8px; color: var(--fg-3); }
 
 /* ---------------------------------------------------------------------------------------------- */
@@ -360,8 +360,10 @@ button, select, input { font: inherit; color: inherit; }
 .key-head .icon { width: 14px; height: 14px; color: var(--fg-3); transition: transform 0.12s; transform: rotate(-90deg); }
 .key-head[aria-expanded="true"] .icon { transform: rotate(90deg); }
 .key-head[aria-expanded="true"] { border-radius: 4px 4px 0 0; }
-.key-body { overflow-y: auto; min-height: 0; padding: 4px 10px 8px; border-top: 1px solid var(--line); }
-.key-grp + .key-grp { margin-top: 6px; }
+.key-body { overflow-y: auto; min-height: 0; padding: 4px 10px 2px; border-top: 1px solid var(--line); }
+.key-grp { break-inside: avoid; padding-bottom: 6px; }
+.key.two { max-width: 440px; }
+.key.two .key-body { columns: 2; column-gap: 18px; }
 .key-grp h3 { font-size: 11px; font-weight: 600; color: var(--fg-3); margin: 2px 0 1px; }
 .key-grp li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 18px; font-size: 12px; }
 .key-grp li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -550,7 +552,7 @@ button, select, input { font: inherit; color: inherit; }
   .top { height: 52px; gap: 8px; padding: 0 16px; }
   .world-name { flex: 1 1 auto; }
   .frame-pick { flex: 0 1 auto; }
-  .select { max-width: 150px; height: 36px; }
+  .select { max-width: 124px; height: 36px; }
   .find { position: static; flex: 0 1 140px; min-width: 90px; }
   .find-q { height: 36px; }
   .find .icon { top: 10px; left: 8px; }

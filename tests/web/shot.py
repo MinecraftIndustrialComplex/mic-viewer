@@ -9,6 +9,7 @@ exceptions, log entries, requests) instead of dropping them, and adds clicks, to
 As a command it screenshots a page:
 
     nix develop -c python3 tests/web/shot.py URL OUT.png [--wait S] [--size 1440x900] [--eval JS]...
+        [--scheme light|dark] [--phone]
 """
 
 import argparse
@@ -270,10 +271,14 @@ def main():
     ap.add_argument("--size", default="1440x900")
     ap.add_argument("--eval", action="append", default=[], help="JS to run, then wait --after seconds")
     ap.add_argument("--after", type=float, default=2.0)
+    ap.add_argument("--scheme", choices=("light", "dark"), help="the prefers-color-scheme to emulate")
+    ap.add_argument("--phone", action="store_true", help="a touch screen at 2 device pixels a pixel, shot at 1")
     a = ap.parse_args()
     w, h = (int(v) for v in a.size.split("x"))
     with Browser(w, h) as b:
-        b.size(w, h)
+        b.size(w, h, scale=2 if a.phone else 1, mobile=a.phone)
+        if a.scheme:
+            b.media(prefers_color_scheme=a.scheme)
         b.call("Page.enable")
         b.navigate(a.url)
         time.sleep(a.wait)
@@ -283,7 +288,7 @@ def main():
             except RuntimeError as e:
                 print(f"shot.py: {e}", file=sys.stderr)
             time.sleep(a.after)
-        n = b.screenshot(a.out)
+        n = b.screenshot(a.out, scale=1 if a.phone else None)
         print(f"{a.out}: {n} bytes")
 
 

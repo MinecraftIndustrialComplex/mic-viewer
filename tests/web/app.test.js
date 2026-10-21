@@ -11,6 +11,8 @@ const path = require('node:path');
 
 const web = f => path.join(__dirname, '..', '..', 'crates', 'mic-viewer', 'web', f);
 require(web('timeline.js'));
+require(web('marks.js'));
+require(web('card.js'));
 const MV = require(web('app.js'));   // boot() needs a document: under node only the helpers load
 
 const local = (mo, d, h, mi) => new Date(2026, mo, d, h, mi).getTime();
@@ -182,4 +184,63 @@ test('isStale, tickAt, fmtAge', () => {
   assert.equal(MV.fmtAge(3 * 3600e3), '3 h ago');
   assert.equal(MV.fmtAge(2 * 86400e3), '2 days ago');
   assert.equal(MV.fmtAge(null), '');
+});
+
+test('fmtDayAt and fmtSourceTime: the header line', () => {
+  assert.equal(MV.fmtDayAt(960000, 24000), 'day 40 at 06:00');
+  assert.equal(MV.fmtSourceTime('demo', 960000, 24000), 'Demo, day 40 at 06:00');
+  assert.equal(MV.fmtSourceTime('save', 3467 * 24000 + 5000, 24000), 'Save, day 3,467 at 11:00');
+  assert.equal(MV.fmtSourceTime('live', null, 24000), 'Live');
+  assert.equal(MV.fmtSourceTime('replay', null, 24000), 'Replay');
+  assert.equal(MV.fmtSourceTime(undefined, null, 24000), 'Save');
+});
+
+test('keyGroups: layers in panel order, legend order, the layer style last', () => {
+  const layers = [
+    { id: 'a', label: 'Villages', legend: [{ label: 'Human' }, { label: 'Ribbit' }, { label: 'Haven' }] },
+    { id: 'b', label: 'Roads' },
+    { id: 'c', label: 'Herds', legend: [{ label: 'Bison' }] },
+    { id: 'd', label: 'Off' },
+  ];
+  const seen = new Map([['c', new Set([-1, 0])], ['a', new Set([2, 0, 7, -1])], ['b', new Set([-1])], ['d', new Set()]]);
+  const g = MV.keyGroups(seen, layers);
+  assert.deepEqual(g.map(x => x.layer.id), ['a', 'b', 'c']);
+  assert.deepEqual(g[0].entries, [{ index: 0, label: 'Human' }, { index: 2, label: 'Haven' }, { index: -1, label: 'Other' }]);
+  assert.deepEqual(g[1].entries, [{ index: -1, label: 'Roads' }]);
+  assert.deepEqual(g[2].entries, [{ index: 0, label: 'Bison' }, { index: -1, label: 'Other' }]);
+  assert.deepEqual(MV.keyGroups({ b: [-1] }, layers).map(x => x.entries[0].label), ['Roads']);
+  assert.deepEqual(MV.keyGroups(null, layers), []);
+});
+
+test('seenFromAnswers: legend indices from the marks held, clusters by their counts', () => {
+  const seen = MV.seenFromAnswers([
+    { desc: { id: 'a' }, data: { marks: [{ k: 'point', ci: 1 }, { k: 'point' }, { k: 'cluster', by: { 0: 3, 2: 1 } }] } },
+    { desc: { id: 'b' }, data: { marks: [] } },
+    { desc: { id: 'c' }, data: null },
+  ]);
+  assert.deepEqual([...seen.keys()], ['a']);
+  assert.deepEqual([...seen.get('a')].sort(), [-1, 0, 1, 2]);
+});
+
+test('findBpp, baseShown, fmtCount', () => {
+  assert.equal(MV.findBpp(null, 40), 2);
+  assert.equal(MV.findBpp(null, 0.5), 0.5);
+  assert.equal(MV.findBpp({ max_bpp: 1 }, 40), 1);
+  assert.equal(MV.findBpp({ min_bpp: 4 }, 40), 4);
+  const tiles = [{ id: 'grid', overlay: true }, { id: 'terrain' }, { id: 'habitat' }];
+  assert.equal(MV.baseShown(tiles, new Set(['grid', 'habitat'])), 'habitat');
+  assert.equal(MV.baseShown(tiles, new Set(['grid'])), null);
+  assert.equal(MV.fmtCount(0), '0');
+  assert.equal(MV.fmtCount(9999), '9,999');
+  assert.equal(MV.fmtCount(123456), MV.compact(123456));
+  assert.equal(MV.fmtCount(null), '');
+});
+
+test('isCompact: many short rows read as a table', () => {
+  const rows = n => Array.from({ length: n }, (_, i) => ({ label: `Stop ${i}`, value: i * 10, unit: 's' }));
+  assert.equal(MV.isCompact(rows(5)), false);
+  assert.equal(MV.isCompact(rows(6)), true);
+  assert.equal(MV.isCompact([...rows(6), { label: 'State', value: 'Replaying since day 3,402, matched' }]), false);
+  assert.equal(MV.isCompact([...rows(6), { label: 'A label far too long to sit in a table cell', value: 1 }]), false);
+  assert.equal(MV.isCompact(null), false);
 });

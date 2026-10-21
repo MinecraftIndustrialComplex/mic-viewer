@@ -328,7 +328,7 @@
       const x1 = V.w - scaleBar.right, x0 = x1 - px, y = V.h - scaleBar.bottom;
       ctx.save();
       ctx.lineCap = 'square';
-      ctx.font = '500 11px ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace';
+      ctx.font = scaleBar.font || '500 11px ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace';
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
       const label = (n >= 1 ? fmtInt(n) : String(n)) + (n === 1 ? ' block' : ' blocks');

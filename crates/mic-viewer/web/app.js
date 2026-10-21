@@ -1059,7 +1059,10 @@
       const seen = A.lastDraw && A.lastDraw.seen && typeof A.lastDraw.seen.get === 'function' ? A.lastDraw.seen : seenFromAnswers(drawList());
       const groups = keyGroups(seen, A.layers);
       const sig = groups.map(g => g.layer.id + ':' + g.entries.map(e => e.index).join(',')).join('|');
-      if (sig === keySig) return;
+      if (sig === keySig) {
+        fitKey();
+        return;
+      }
       keySig = sig;
       keyBox.hidden = !groups.length;
       keyBody.textContent = '';
@@ -1078,6 +1081,21 @@
         box.appendChild(ul);
         keyBody.appendChild(box);
       }
+      keyFit = null;
+      fitKey();
+    }
+
+    // A key too long for the stage goes to two columns, and scrolls only when two do not fit.
+    let keyFit = null;
+    function fitKey() {
+      const at = `${innerWidth}x${innerHeight} ${keyBody.hidden} ${keyBox.hidden}`;
+      if (at === keyFit) return;
+      keyFit = at;
+      keyBox.classList.remove('two');
+      if (keyBody.hidden || keyBox.hidden || phoneMQ.matches) return;
+      if (keyBody.scrollHeight <= keyBody.clientHeight + 1) return;
+      keyBox.classList.add('two');
+      if (keyBody.scrollWidth > keyBody.clientWidth + 1) keyBox.classList.remove('two');
     }
 
     function setKeyOpen(open, quiet) {
@@ -1085,6 +1103,7 @@
       keyHead.setAttribute('aria-expanded', String(open));
       keyHead.title = open ? 'Hide the key' : 'Show the key';
       if (!quiet) store.set('key', open);
+      fitKey();
     }
     keyHead.addEventListener('click', () => setKeyOpen(keyBody.hidden));
 
@@ -1191,6 +1210,8 @@
     // On a desk the card covers the stage's right edge: the zoom buttons and the scale bar step
     // left of it. On a phone the card is a sheet and they stay put.
     // The scale bar sits between the readout (bottom) and the zoom buttons (viewer.css).
+    const SCALE_FONT = '500 11px system-ui, -apple-system, "Segoe UI", sans-serif';
+
     function placeOverlays() {
       if (!map) return;
       const phone = phoneMQ.matches;
@@ -1198,7 +1219,7 @@
       $('stage').classList.toggle('card-open', covered);
       map.setScaleBar({
         right: covered ? cardBox.offsetWidth + 24 : phone ? 16 : 12, bottom: phone ? 44 : 40,
-        ink: A.theme.ink, halo: A.theme.halo,
+        ink: A.theme.ink, halo: A.theme.halo, font: SCALE_FONT,
       });
     }
 
@@ -1682,7 +1703,7 @@
         minBpp: 1 / 4,
         onView, onHover, onClick, onKey,
         overlays: [overlay],
-        scaleBar: { right: 12, bottom: 40, ink: A.theme.ink, halo: A.theme.halo },
+        scaleBar: { right: 12, bottom: 40, ink: A.theme.ink, halo: A.theme.halo, font: SCALE_FONT },
         start: false,
       });
       applyTheme();

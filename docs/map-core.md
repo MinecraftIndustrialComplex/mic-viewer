@@ -30,7 +30,8 @@ const map = MicViewer.createMap({
   onClick: (x, z, px, py, ev) => {}, // a click that was not a drag
   onKey: ev => false,  // keys the map did not use; return true when used
   overlays: [],        // functions (ctx, map) drawn after the tiles each frame, ctx in CSS px
-  scaleBar: { right: 12, bottom: 12 }, // where the scale bar sits (CSS px from the corner), or false
+  scaleBar: { right: 12, bottom: 12 }, // where the scale bar sits (CSS px from the corner), or false;
+                                       // also `ink`, `halo` (colours) and `font` (a canvas font)
   view: null,          // { cx, cz, bpp } to start at instead of home()
   start: true,         // false: call map.start() yourself (after wiring what the overlays need)
 });
