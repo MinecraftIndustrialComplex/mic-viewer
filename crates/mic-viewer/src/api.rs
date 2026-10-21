@@ -31,6 +31,23 @@ pub struct WorldInfo {
     pub has_events: bool,
     #[serde(default)]
     pub stream: bool,
+    /// Whether `/api/find` answers (the page shows its search box).
+    #[serde(default)]
+    pub find: bool,
+}
+
+/// One answer of `/api/find`: a named thing and where it is.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Found {
+    pub layer: String,
+    pub id: String,
+    pub label: String,
+    /// What it is, in words ("Station", "Train").
+    #[serde(default)]
+    pub kind: String,
+    pub frame: String,
+    pub x: f64,
+    pub z: f64,
 }
 
 /// A dimension.
@@ -195,7 +212,7 @@ impl LayerDesc {
             default_on: true,
             min_bpp: 0.0,
             max_bpp: 1e9,
-            style: Style { color: color.into(), glyph: "circle".into(), size: 6.0, width: 2.0 },
+            style: Style::new(color),
             legend: Vec::new(),
             has_cards: true,
             has_past: false,
@@ -241,8 +258,25 @@ impl LayerDesc {
     }
 
     pub fn legend(mut self, entries: &[(&str, &str)]) -> Self {
-        self.legend =
-            entries.iter().map(|(l, c)| LegendEntry { label: (*l).into(), color: (*c).into(), glyph: None }).collect();
+        self.legend = entries.iter().map(|(l, c)| LegendEntry::new(l, c)).collect();
+        self
+    }
+
+    /// The legend, entries built in full.
+    pub fn legend_entries(mut self, entries: Vec<LegendEntry>) -> Self {
+        self.legend = entries;
+        self
+    }
+
+    /// The paths' line style (see [`Style::line`]).
+    pub fn line(mut self, l: &str) -> Self {
+        self.style.line = Some(l.into());
+        self
+    }
+
+    /// Labels on the map at `bpp` and closer (see [`Style::label_bpp`]).
+    pub fn labels_below(mut self, bpp: f64) -> Self {
+        self.style.label_bpp = Some(bpp);
         self
     }
 
@@ -263,6 +297,20 @@ pub struct Style {
     pub glyph: String,
     pub size: f64,
     pub width: f64,
+    /// The line style of the layer's paths (`rail`, `chain`, `belt`, `flow`, `dash`, `dot`), unless a
+    /// mark names its own (`st`). None: a plain line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
+    /// Point and path labels (`l`) are drawn on the map at this zoom and closer (blocks per CSS
+    /// pixel). None: only in the tooltip. Area labels are drawn whenever the area is big enough.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_bpp: Option<f64>,
+}
+
+impl Style {
+    pub fn new(color: &str) -> Style {
+        Style { color: color.into(), glyph: "circle".into(), size: 6.0, width: 2.0, line: None, label_bpp: None }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -271,6 +319,33 @@ pub struct LegendEntry {
     pub color: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glyph: Option<String>,
+    /// A line style, for an entry drawn as a line (see [`Style::line`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
+    /// A state (`bad`, `warn`, `off`, as a mark's `st`), for an entry that names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub st: Option<String>,
+}
+
+impl LegendEntry {
+    pub fn new(label: &str, color: &str) -> LegendEntry {
+        LegendEntry { label: label.into(), color: color.into(), glyph: None, line: None, st: None }
+    }
+
+    pub fn glyph(mut self, g: &str) -> Self {
+        self.glyph = Some(g.into());
+        self
+    }
+
+    pub fn line(mut self, l: &str) -> Self {
+        self.line = Some(l.into());
+        self
+    }
+
+    pub fn st(mut self, st: &str) -> Self {
+        self.st = Some(st.into());
+        self
+    }
 }
 
 /// One mark (docs/api.md §4), tagged by `k`.
@@ -293,6 +368,13 @@ pub enum Mark {
         l: Option<String>,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         ring: bool,
+        /// A heading in radians (0 east, clockwise as z runs south) for glyphs drawn turned
+        /// (`station`, `signal`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        a: Option<f64>,
+        /// A state the page draws on the glyph: `bad` (a red ring), `warn` (amber), `off` (hollow).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        st: Option<String>,
     },
     Leg {
         id: String,
@@ -318,6 +400,17 @@ pub enum Mark {
         c: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         w: Option<f64>,
+        /// The line style (see [`Style::line`]); None: the layer's.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        st: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        l: Option<String>,
+        /// Arrows along it, the way `p` runs.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        arrow: bool,
+        /// Things on it (packages on a chain), drawn spread along it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        n: Option<u32>,
     },
     Edge {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -348,6 +441,28 @@ pub enum Mark {
         c: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         l: Option<String>,
+        /// Outline rings (each closed, even-odd), drawn instead of the box or disc: a district's
+        /// chunks. `box` should still be set (their bounds) for older pages.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rings: Option<Vec<Vec<[f64; 2]>>>,
+        /// The outline's style: `dash`, `dot`, `bad`; None: solid.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        st: Option<String>,
+    },
+    /// A train: one box per carriage, `[x0, z0, x1, z1]` from its front bogey to its back one, the
+    /// leading carriage first (so the train runs towards `cars[0]`'s `x0, z0`).
+    Train {
+        id: String,
+        cars: Vec<[f64; 4]>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ci: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        c: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        l: Option<String>,
+        /// `bad` (derailed), `off` (standing), `warn`; None: running.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        st: Option<String>,
     },
     Cell {
         x0: f64,
@@ -380,7 +495,7 @@ pub enum Mark {
 impl Mark {
     /// A point with only its id and place.
     pub fn point(id: impl ToString, x: f64, z: f64) -> Mark {
-        Mark::Point { id: id.to_string(), x, z, ci: None, c: None, g: None, s: None, l: None, ring: false }
+        Mark::Point { id: id.to_string(), x, z, ci: None, c: None, g: None, s: None, l: None, ring: false, a: None, st: None }
     }
 
     /// A straight leg.
@@ -393,17 +508,83 @@ impl Mark {
     }
 
     pub fn disc(id: Option<String>, x: f64, z: f64, r: f64) -> Mark {
-        Mark::Area { id, x: Some(x), z: Some(z), r: Some(r), r#box: None, ci: None, c: None, l: None }
+        Mark::Area { id, x: Some(x), z: Some(z), r: Some(r), r#box: None, ci: None, c: None, l: None, rings: None, st: None }
     }
 
     pub fn rect(id: Option<String>, b: [f64; 4]) -> Mark {
-        Mark::Area { id, x: None, z: None, r: None, r#box: Some(b), ci: None, c: None, l: None }
+        Mark::Area { id, x: None, z: None, r: None, r#box: Some(b), ci: None, c: None, l: None, rings: None, st: None }
+    }
+
+    /// A polyline.
+    pub fn path(p: Vec<[f64; 2]>) -> Mark {
+        Mark::Path { id: None, p, ci: None, c: None, w: None, st: None, l: None, arrow: false, n: None }
+    }
+
+    /// An outline of `rings` (closed polygons, even-odd), with their bounds as its box.
+    pub fn outline(id: Option<String>, rings: Vec<Vec<[f64; 2]>>) -> Mark {
+        let mut b = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
+        for q in rings.iter().flatten() {
+            b = [b[0].min(q[0]), b[1].min(q[1]), b[2].max(q[0]), b[3].max(q[1])];
+        }
+        if !b[0].is_finite() {
+            b = [0.0; 4];
+        }
+        Mark::Area { id, x: None, z: None, r: None, r#box: Some(b), ci: None, c: None, l: None, rings: Some(rings), st: None }
+    }
+
+    /// A train of `cars` (see [`Mark::Train`]).
+    pub fn train(id: impl ToString, cars: Vec<[f64; 4]>) -> Mark {
+        Mark::Train { id: id.to_string(), cars, ci: None, c: None, l: None, st: None }
+    }
+
+    /// Sets a state (points, paths' styles, areas' outlines, trains): see each kind's `st`.
+    pub fn with_state(mut self, v: &str) -> Mark {
+        match &mut self {
+            Mark::Point { st, .. } | Mark::Path { st, .. } | Mark::Area { st, .. } | Mark::Train { st, .. } => {
+                *st = Some(v.to_owned())
+            }
+            _ => {}
+        }
+        self
+    }
+
+    /// Sets a point's heading (radians).
+    pub fn with_heading(mut self, v: f64) -> Mark {
+        if let Mark::Point { a, .. } = &mut self {
+            *a = Some(v);
+        }
+        self
+    }
+
+    /// Sets a path's width (CSS px) or an edge's.
+    pub fn with_width(mut self, v: f64) -> Mark {
+        match &mut self {
+            Mark::Path { w, .. } | Mark::Edge { w, .. } => *w = Some(v),
+            _ => {}
+        }
+        self
+    }
+
+    /// Arrows along a path.
+    pub fn with_arrows(mut self) -> Mark {
+        if let Mark::Path { arrow, .. } = &mut self {
+            *arrow = true;
+        }
+        self
+    }
+
+    /// Things spread along a path.
+    pub fn with_count(mut self, v: u32) -> Mark {
+        if let Mark::Path { n, .. } = &mut self {
+            *n = Some(v);
+        }
+        self
     }
 
     /// Sets the id that opens its card (no-op for kinds without one: cells, clusters, labels).
     pub fn with_id(mut self, v: impl ToString) -> Mark {
         match &mut self {
-            Mark::Point { id, .. } | Mark::Leg { id, .. } => *id = v.to_string(),
+            Mark::Point { id, .. } | Mark::Leg { id, .. } | Mark::Train { id, .. } => *id = v.to_string(),
             Mark::Path { id, .. } | Mark::Edge { id, .. } | Mark::Area { id, .. } => *id = Some(v.to_string()),
             _ => {}
         }
@@ -417,7 +598,8 @@ impl Mark {
             | Mark::Leg { ci, .. }
             | Mark::Path { ci, .. }
             | Mark::Edge { ci, .. }
-            | Mark::Area { ci, .. } => *ci = Some(v),
+            | Mark::Area { ci, .. }
+            | Mark::Train { ci, .. } => *ci = Some(v),
             _ => {}
         }
         self
@@ -430,16 +612,21 @@ impl Mark {
             | Mark::Leg { c, .. }
             | Mark::Path { c, .. }
             | Mark::Edge { c, .. }
-            | Mark::Area { c, .. } => *c = Some(v.to_owned()),
+            | Mark::Area { c, .. }
+            | Mark::Train { c, .. } => *c = Some(v.to_owned()),
             _ => {}
         }
         self
     }
 
-    /// Sets the label (points, legs, areas).
+    /// Sets the label (points, legs, paths, areas, trains).
     pub fn with_label(mut self, v: impl Into<String>) -> Mark {
         match &mut self {
-            Mark::Point { l, .. } | Mark::Leg { l, .. } | Mark::Area { l, .. } => *l = Some(v.into()),
+            Mark::Point { l, .. }
+            | Mark::Leg { l, .. }
+            | Mark::Path { l, .. }
+            | Mark::Area { l, .. }
+            | Mark::Train { l, .. } => *l = Some(v.into()),
             _ => {}
         }
         self
@@ -477,6 +664,7 @@ impl Mark {
             Mark::Path { .. } => "path",
             Mark::Edge { .. } => "edge",
             Mark::Area { .. } => "area",
+            Mark::Train { .. } => "train",
             Mark::Cell { .. } => "cell",
             Mark::Cluster { .. } => "cluster",
             Mark::Label { .. } => "label",
@@ -490,7 +678,8 @@ impl Mark {
             | Mark::Leg { ci, .. }
             | Mark::Path { ci, .. }
             | Mark::Edge { ci, .. }
-            | Mark::Area { ci, .. } => *ci,
+            | Mark::Area { ci, .. }
+            | Mark::Train { ci, .. } => *ci,
             _ => None,
         }
     }
@@ -521,7 +710,16 @@ impl Mark {
                 add(a[0], a[1]);
                 add(e[0], e[1]);
             }
-            Mark::Area { x, z, r, r#box, .. } => {
+            Mark::Train { cars, .. } => {
+                for q in cars {
+                    add(q[0], q[1]);
+                    add(q[2], q[3]);
+                }
+            }
+            Mark::Area { x, z, r, r#box, rings, .. } => {
+                for q in rings.iter().flatten().flatten() {
+                    add(q[0], q[1]);
+                }
                 if let Some(bx) = r#box {
                     add(bx[0], bx[1]);
                     add(bx[2], bx[3]);
@@ -547,6 +745,7 @@ impl Mark {
         match self {
             Mark::Leg { p, t0, t1, .. } => leg_at(p, *t0, *t1, t),
             Mark::Edge { a, b, .. } => [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0],
+            Mark::Train { cars, .. } if !cars.is_empty() => [cars[0][0], cars[0][1]],
             _ => {
                 let b = self.bbox();
                 [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0]
@@ -557,7 +756,7 @@ impl Mark {
     /// The thing's id, for marks that have one.
     pub fn id(&self) -> Option<&str> {
         match self {
-            Mark::Point { id, .. } | Mark::Leg { id, .. } => Some(id),
+            Mark::Point { id, .. } | Mark::Leg { id, .. } | Mark::Train { id, .. } => Some(id),
             Mark::Path { id, .. } | Mark::Edge { id, .. } | Mark::Area { id, .. } => id.as_deref(),
             _ => None,
         }

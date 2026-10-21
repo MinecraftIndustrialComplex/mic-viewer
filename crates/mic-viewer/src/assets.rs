@@ -34,6 +34,23 @@ pub fn file(name: &str) -> Option<&'static Asset> {
 /// The map core alone, for a project's own page.
 pub const MAP_JS: &str = include_str!("../web/map.js");
 
+/// The environment variable that names a folder to serve the page's files from instead of the
+/// compiled-in copies, read again on every request: for working on the page without a rebuild. Only
+/// the names in [`FILES`] and the page are served from it.
+pub const WEB_DIR_ENV: &str = "MIC_VIEWER_WEB_DIR";
+
+/// The body of `name` (`viewer.html` for the page): from [`WEB_DIR_ENV`]'s folder when that is set
+/// and holds it, else the compiled-in copy. None for a name that is not one of the page's files.
+pub fn body(name: &str) -> Option<std::borrow::Cow<'static, str>> {
+    let built: &'static str = if name == "viewer.html" { PAGE } else { file(name)?.body };
+    if let Some(dir) = std::env::var_os(WEB_DIR_ENV)
+        && let Ok(s) = std::fs::read_to_string(std::path::Path::new(&dir).join(name))
+    {
+        return Some(std::borrow::Cow::Owned(s));
+    }
+    Some(std::borrow::Cow::Borrowed(built))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

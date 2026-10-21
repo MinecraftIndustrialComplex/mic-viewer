@@ -12,7 +12,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::aggregate;
-use crate::api::{Card, EventsAnswer, Histogram, LayerMarks, Layers, MARK_BUDGET, MarksAnswer, Tick, WorldInfo};
+use crate::api::{Card, EventsAnswer, Found, Histogram, LayerMarks, Layers, MARK_BUDGET, MarksAnswer, Tick, WorldInfo};
 use crate::assets;
 use crate::http::{Handler, NO_CACHE, Reply, Request, Response, VIEWER_CSP};
 use crate::scene::Scene;
@@ -60,6 +60,15 @@ pub trait Backend: Send + Sync + 'static {
     fn scene(&self, frame: &str, t: Option<Tick>) -> Option<Arc<Scene>>;
     /// `/api/thing/<layer>/<id>`.
     fn card(&self, layer: &str, id: &str, t: Option<Tick>) -> Option<Card>;
+    /// The view a page asked marks for (`/api/marks`: the frame, the box in blocks and the zoom in
+    /// blocks per CSS pixel), told before [`Backend::scene`] is asked, so a backend that reads on
+    /// demand can start on what is shown. It must not block on that reading.
+    fn look(&self, _frame: &str, _area: [f64; 4], _bpp: f64) {}
+    /// `/api/find?q=`: named things matching `q`, best first, at most `limit`. `world().find` says
+    /// whether the backend answers it.
+    fn find(&self, _q: &str, _limit: usize) -> Vec<Found> {
+        Vec::new()
+    }
     /// `/api/events`.
     fn events(&self, _q: &EventQuery) -> EventsAnswer {
         EventsAnswer::default()
@@ -164,6 +173,9 @@ impl<B: Backend> App<B> {
             return Response::error(400, "give bpp (blocks per CSS pixel, above 0)");
         };
         let t = req.num::<Tick>("t");
+        if t.is_none() {
+            self.backend.look(&frame, b, bpp);
+        }
         let Some(scene) = self.backend.scene(&frame, t) else {
             return Response::error(404, format!("no frame {frame:?} at that time"));
         };
@@ -293,7 +305,8 @@ impl<B: Backend> Handler for App<B> {
         let path = req.path.as_str();
         match path {
             "/" | "/index.html" => {
-                return Response::ok("text/html; charset=utf-8", NO_CACHE, assets::PAGE.as_bytes().to_vec())
+                let page = assets::body("viewer.html").unwrap_or(std::borrow::Cow::Borrowed(assets::PAGE));
+                return Response::ok("text/html; charset=utf-8", NO_CACHE, page.as_bytes().to_vec())
                     .with_csp(VIEWER_CSP)
                     .into();
             }
@@ -315,6 +328,13 @@ impl<B: Backend> Handler for App<B> {
                 .into();
             }
             "/api/stream" => return self.stream(),
+            "/api/find" => {
+                let q = req.param("q").unwrap_or_default();
+                let limit = req.num::<usize>("limit").unwrap_or(20).clamp(1, 100);
+                let q = q.trim();
+                let found = if q.is_empty() { Vec::new() } else { self.backend.find(q, limit) };
+                return Response::json_of(&serde_json::json!({ "q": q, "found": found })).into();
+            }
             _ => {}
         }
         if let Some(rest) = path.strip_prefix("/api/thing/") {
@@ -337,7 +357,8 @@ impl<B: Backend> Handler for App<B> {
             .into();
         }
         if let Some(f) = assets::file(path.trim_start_matches('/')) {
-            return Response::ok(f.content_type, NO_CACHE, f.body.as_bytes().to_vec()).into();
+            let body = assets::body(f.name).unwrap_or(std::borrow::Cow::Borrowed(f.body));
+            return Response::ok(f.content_type, NO_CACHE, body.as_bytes().to_vec()).into();
         }
         self.backend.extra(req).unwrap_or_else(|| Response::not_found().into())
     }

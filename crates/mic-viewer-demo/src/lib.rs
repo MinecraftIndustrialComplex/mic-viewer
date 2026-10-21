@@ -497,6 +497,10 @@ impl World {
                     ci: Some(species_ci(h.species)),
                     c: None,
                     w: Some(1.5),
+                    st: None,
+                    l: None,
+                    arrow: false,
+                    n: None,
                 },
             );
         }
@@ -1129,6 +1133,7 @@ impl Backend for Demo {
                 .collect(),
             has_events: true,
             stream: true,
+            find: false,
         }
     }
 

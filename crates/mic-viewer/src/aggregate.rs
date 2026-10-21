@@ -14,6 +14,9 @@
 //! area smaller than a bin is a dot at that zoom and bins the same way. Larger shapes and cells
 //! cannot be binned into a bubble: over the share, the largest are kept (a long road matters more
 //! at a distance than a short one), and `shown` says how many of `total`.
+//!
+//! **Simplifying.** A path's points are thinned to a quarter of a pixel at the asked zoom
+//! (Douglas-Peucker), so a far view of a curvy rail network costs what it draws.
 
 use std::collections::BTreeMap;
 
@@ -62,7 +65,7 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
             total,
             shown: total,
             clustered: false,
-            marks: marks.into_iter().cloned().collect(),
+            marks: marks.into_iter().map(|m| at_zoom(m, bpp)).collect(),
             empty: None,
         };
     }
@@ -72,7 +75,7 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
     // A shape smaller than a bin is a dot at this zoom: it bins like a point.
     let bin_blocks = BIN_PX * bpp;
     let (movable, fixed): (Vec<&Mark>, Vec<&Mark>) = marks.into_iter().partition(|m| {
-        matches!(m, Mark::Point { .. } | Mark::Leg { .. } | Mark::Cluster { .. } | Mark::Label { .. }) || {
+        matches!(m, Mark::Point { .. } | Mark::Leg { .. } | Mark::Train { .. } | Mark::Cluster { .. } | Mark::Label { .. }) || {
             let b = m.bbox();
             !matches!(m, Mark::Cell { .. }) && (b[2] - b[0]).max(b[3] - b[1]) < bin_blocks
         }
@@ -88,7 +91,7 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
         fixed.truncate(fixed_share);
     }
     shown += fixed.len() as u64;
-    out_marks.extend(fixed.into_iter().cloned());
+    out_marks.extend(fixed.into_iter().map(|m| at_zoom(m, bpp)));
     let movable_share = share - out_marks.len();
     let mut clustered = false;
     if movable.len() <= movable_share {
@@ -131,6 +134,59 @@ pub fn reduce(marks: Vec<&Mark>, share: usize, bpp: f64, t: Tick) -> LayerMarks 
         }
     }
     LayerMarks { version: 0, total, shown, clustered, marks: out_marks, empty: None }
+}
+
+/// A mark as drawn at `bpp`: a path's points thinned to a quarter of a pixel.
+fn at_zoom(m: &Mark, bpp: f64) -> Mark {
+    match m {
+        Mark::Path { p, .. } if p.len() > 2 && bpp > 0.0 => {
+            let keep = simplify(p, 0.25 * bpp);
+            let mut out = m.clone();
+            if let Mark::Path { p: q, .. } = &mut out {
+                *q = keep;
+            }
+            out
+        }
+        _ => m.clone(),
+    }
+}
+
+/// Douglas-Peucker: the points of `p` that keep it within `tol` blocks; the ends always stay.
+pub fn simplify(p: &[[f64; 2]], tol: f64) -> Vec<[f64; 2]> {
+    if p.len() <= 2 || tol <= 0.0 {
+        return p.to_vec();
+    }
+    let mut keep = vec![false; p.len()];
+    keep[0] = true;
+    keep[p.len() - 1] = true;
+    let mut stack = vec![(0usize, p.len() - 1)];
+    let tol2 = tol * tol;
+    while let Some((a, b)) = stack.pop() {
+        if b <= a + 1 {
+            continue;
+        }
+        let (ax, az, bx, bz) = (p[a][0], p[a][1], p[b][0], p[b][1]);
+        let (dx, dz) = (bx - ax, bz - az);
+        let l2 = dx * dx + dz * dz;
+        let mut best = (0.0f64, a);
+        for (i, q) in p.iter().enumerate().take(b).skip(a + 1) {
+            let d2 = if l2 <= 0.0 {
+                (q[0] - ax).powi(2) + (q[1] - az).powi(2)
+            } else {
+                let f = (((q[0] - ax) * dx + (q[1] - az) * dz) / l2).clamp(0.0, 1.0);
+                (q[0] - (ax + f * dx)).powi(2) + (q[1] - (az + f * dz)).powi(2)
+            };
+            if d2 > best.0 {
+                best = (d2, i);
+            }
+        }
+        if best.0 > tol2 {
+            keep[best.1] = true;
+            stack.push((a, best.1));
+            stack.push((best.1, b));
+        }
+    }
+    p.iter().zip(keep).filter(|(_, k)| *k).map(|(q, _)| *q).collect()
 }
 
 /// What a mark counts for in a cluster (a cluster from a source counts its own `n`).
