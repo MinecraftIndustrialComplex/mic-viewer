@@ -20,7 +20,8 @@
 
   /**
    * A number for people: thousands separated, as many decimals as its size deserves (1,234,567;
-   * 1,234.5; 12.35; 1.04; 0.0123), never "-0", tiny and huge values in exponent form.
+   * 1,235 for 1,234.5; 123.4; 12.35; 1.04; 0.0123), never "-0", tiny and huge values in exponent
+   * form.
    */
   function fmtNum(v) {
     if (typeof v !== 'number') v = Number(v);

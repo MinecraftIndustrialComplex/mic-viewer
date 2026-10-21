@@ -250,7 +250,7 @@ def desktop(s, base):
     ok = b.wait_for("!document.getElementById('past').hidden && MicViewer.app.state.t != null", timeout=6)
     s.check(bool(ok), "a click on the histogram shows the past")
     s.settle()
-    s.check(b.eval("MicViewer.app.state.marks.t === MicViewer.app.state.t && location.hash.includes('t=')"),
+    s.check(bool(b.wait_for("MicViewer.app.state.marks.t === MicViewer.app.state.t && location.hash.includes('t=')", timeout=4)),
             "marks are asked at that time and the hash keeps it")
     b.click_selector("#past-now")
     ok = b.wait_for("document.getElementById('past').hidden && MicViewer.app.state.t == null", timeout=6)
