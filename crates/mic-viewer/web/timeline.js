@@ -71,6 +71,32 @@
   }
 
   /**
+   * Wall labels for axis ticks (`ms` per tick, null where unknown): a date only where it changes;
+   * when the ticks are less than about a day apart in wall time, the clock too ("Oct 21 14:05",
+   * then "16:05" until the date changes).
+   */
+  function wallLabels(ms) {
+    let step = Infinity, prev = null;
+    for (const v of ms) {
+      if (v == null || !isFinite(v)) continue;
+      if (prev != null) step = Math.min(step, Math.abs(v - prev));
+      prev = v;
+    }
+    const clockToo = !(step >= 20 * 3600e3);
+    let lastDay = null;
+    return ms.map(v => {
+      if (v == null || !isFinite(v)) return '';
+      const d = new Date(v);
+      const day = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+      const clock = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      const same = day === lastDay;
+      lastDay = day;
+      if (!clockToo) return same ? '' : day;
+      return same ? clock : `${day} ${clock}`;
+    });
+  }
+
+  /**
    * Axis ticks between `from` and `to`: the smallest step of whole game hours or days that leaves
    * `minPx` between labels at `pxPerTick`. Returns `{ step, ticks: [tick, ...] }`.
    */
@@ -169,7 +195,10 @@
       b.title = `${k.label} (${k.group}): click to hide or show`;
       kindsBox.appendChild(b);
     }
-    head.append(spanSeg, kindsBox);
+    const nowBtn = el('button', 'btn btn-sm tl-now', 'Now');
+    nowBtn.type = 'button';
+    nowBtn.title = 'Back to the present (End)';
+    head.append(spanSeg, kindsBox, nowBtn);
     const body = el('div', 'tl-body');
     const chart = el('div', 'tl-chart');
     const canvas = el('canvas', 'tl-canvas');
@@ -198,12 +227,13 @@
 
     function syncControls() {
       for (const b of spanSeg.children) b.setAttribute('aria-pressed', String(b.dataset.span === S.span));
+      nowBtn.disabled = S.t == null;
       const sums = {};
       if (S.hist) for (const [k, v] of Object.entries(S.hist.series || {})) sums[k] = v.reduce((a, b) => a + b, 0);
       for (const b of kindsBox.children) {
         const id = b.dataset.kind;
         b.setAttribute('aria-pressed', String(!S.hidden.has(id)));
-        b.lastChild.textContent = sums[id] != null ? MV.compact ? MV.compact(sums[id]) : String(sums[id]) : '0';
+        b.lastChild.textContent = sums[id] != null ? (MV.compact ? MV.compact(sums[id]) : String(sums[id])) : '0';
       }
     }
 
@@ -399,15 +429,15 @@
       ctx.textBaseline = 'top';
       ctx.textAlign = 'left';
       const daily = ax.step >= tpd;
-      for (const t of ax.ticks) {
+      const shown = ax.ticks.filter(t => Math.round(xOf(t)) + 3 <= W - 40);
+      const walls = wallLabels(shown.map(t => wallAt(h.wall, t)));
+      shown.forEach((t, i) => {
         const x = Math.round(xOf(t)) + 3;
-        if (x > W - 40) continue;
         ctx.fillStyle = fg2;
         ctx.fillText(daily || t % tpd === 0 ? `Day ${gameDay(t, tpd)}` : gameClock(t, tpd), x, 2);
-        const ms = wallAt(h.wall, t);
         ctx.fillStyle = fg3;
-        ctx.fillText(fmtWall(ms, !daily), x, TOP + chartH + 4);
-      }
+        if (walls[i]) ctx.fillText(walls[i], x, TOP + chartH + 4);
+      });
       // The time shown: the scrubber, or "now" at the right end.
       const cur = S.t != null ? S.t : null;
       if (cur != null) {
@@ -470,6 +500,7 @@
       if (t != null && t >= now()) t = null;   // the present is "live"
       if (t === S.t) return;
       S.t = t;
+      syncControls();
       draw();
       scheduleList(fromUser ? 200 : 0);
       if (fromUser && opts.onScrub) opts.onScrub(t);
@@ -478,7 +509,7 @@
     let drag = null;
     canvas.addEventListener('pointerdown', ev => {
       if (!S.hist) return;
-      canvas.focus({ preventScroll: true });
+      if (ev.pointerType !== 'touch') canvas.focus({ preventScroll: true });
       try { canvas.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic events */ }
       drag = ev.pointerId;
       const r = canvas.getBoundingClientRect();
@@ -519,6 +550,7 @@
       else used = false;
       if (used) ev.preventDefault();
     });
+    nowBtn.addEventListener('click', () => setT(null, true));
     spanSeg.addEventListener('click', ev => {
       const b = ev.target.closest('[data-span]');
       if (!b || b.dataset.span === S.span) return;
@@ -578,6 +610,6 @@
     };
   }
 
-  Object.assign(MV, { gameDay, gameClock, fmtGameTime, fmtSpan, wallAt, fmtWall, axisTicks, stackBuckets, createTimeline });
+  Object.assign(MV, { gameDay, gameClock, fmtGameTime, fmtSpan, wallAt, fmtWall, wallLabels, axisTicks, stackBuckets, createTimeline });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 })();

@@ -1,5 +1,101 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>mic-viewer</title><link rel="stylesheet" href="viewer.css"></head>
-<body><canvas id="map"></canvas><script src="map.js"></script><script src="app.js"></script></body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>mic-viewer</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="viewer.css">
+<script src="map.js" defer></script>
+<script src="flat.js" defer></script>
+<script src="marks.js" defer></script>
+<script src="card.js" defer></script>
+<script src="timeline.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-mark" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3.5 9h17M3.5 15h17M12 3c-3.2 3.4-3.2 14.6 0 18M12 3c3.2 3.4 3.2 14.6 0 18"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3.5 2.8 8.2 12 13l9.2-4.8z"/><path d="m2.8 12.2 9.2 4.8 9.2-4.8"/><path d="m2.8 16.2 9.2 4.8 9.2-4.8"/></symbol>
+  <symbol id="i-timeline" viewBox="0 0 24 24"><path d="M3 20.5h18"/><path d="M6 16.5v-4M10 16.5v-9M14 16.5v-6M18 16.5V5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M2.5 12h2M19.5 12h2M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.6A8.2 8.2 0 0 1 9.4 4 8.2 8.2 0 1 0 20 14.6z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></symbol>
+  <symbol id="i-tiles" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.2"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.2"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.2"/></symbol>
+</svg>
+<a class="skip" href="#map">Skip to the map</a>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <svg class="icon brand-mark" aria-hidden="true"><use href="#i-mark"/></svg>
+      <span class="brand-name">mic-viewer</span>
+      <span class="world-name" id="world-name"></span>
+    </div>
+    <label class="frame-pick" id="frame-pick" hidden>
+      <span class="vh">Frame</span>
+      <select id="frame" class="select" title="The dimension or frame shown"></select>
+    </label>
+    <div class="source" id="source" role="status">
+      <span class="src-dot" aria-hidden="true"></span>
+      <span class="src-kind" id="src-kind"></span>
+      <span class="src-time num" id="src-time"></span>
+      <span class="src-fresh" id="src-fresh" hidden></span>
+    </div>
+    <div class="past" id="past" hidden>
+      <span class="past-label">Showing</span>
+      <span class="past-time num" id="past-time"></span>
+      <button class="btn btn-sm btn-now" id="past-now" type="button" title="Back to the present">Now</button>
+    </div>
+    <div class="top-tools">
+      <button class="btn tbtn" id="btn-layers" type="button" aria-controls="side" aria-expanded="false" title="Layers (L)">
+        <svg class="icon" aria-hidden="true"><use href="#i-layers"/></svg><span class="tbtn-label">Layers</span>
+      </button>
+      <button class="btn tbtn" id="btn-timeline" type="button" aria-controls="tl" aria-expanded="false" title="Timeline (T)">
+        <svg class="icon" aria-hidden="true"><use href="#i-timeline"/></svg><span class="tbtn-label">Timeline</span>
+      </button>
+      <button class="btn tbtn icon-only" id="btn-theme" type="button" aria-label="Switch the theme"></button>
+    </div>
+  </header>
+
+  <aside class="side" id="side" aria-label="Layers" hidden>
+    <div class="side-head">
+      <h2>Layers</h2>
+      <button class="btn icon-btn" id="side-close" type="button" aria-label="Close the layers" title="Close (L)">
+        <svg class="icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
+    </div>
+    <div class="side-body" id="side-body"></div>
+  </aside>
+
+  <main class="stage" id="stage">
+    <canvas class="map" id="map" aria-label="World map. Drag or use the arrow keys to move, the wheel or plus and minus to zoom, Enter to open what is under the pointer, L for layers, T for the timeline."></canvas>
+    <div class="tip" id="tip" hidden></div>
+    <div class="readout num" id="readout"></div>
+    <div class="zoom" role="group" aria-label="Zoom">
+      <button class="btn icon-btn" id="zoom-in" type="button" aria-label="Zoom in" title="Zoom in (+)"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+      <button class="btn icon-btn" id="zoom-out" type="button" aria-label="Zoom out" title="Zoom out (-)"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button>
+      <button class="btn icon-btn" id="zoom-home" type="button" aria-label="Show the whole frame" title="Whole frame (0)"><svg class="icon" aria-hidden="true"><use href="#i-fit"/></svg></button>
+    </div>
+    <section class="card" id="card" aria-labelledby="card-title" hidden>
+      <div class="card-bar">
+        <button class="btn btn-sm" id="card-back" type="button" hidden><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg>Back</button>
+        <span class="grow"></span>
+        <button class="btn icon-btn" id="card-close" type="button" aria-label="Close the card" title="Close (Esc)"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="card-body" id="card-body"></div>
+    </section>
+    <div class="toast" id="toast" role="alert" hidden></div>
+    <div class="boot" id="boot"><div class="spinner"></div><p>Loading the world</p></div>
+  </main>
+
+  <section class="tl-panel" id="tl" aria-label="Timeline" hidden>
+    <div class="tl" id="tl-root"></div>
+  </section>
+</div>
+</body>
 </html>
