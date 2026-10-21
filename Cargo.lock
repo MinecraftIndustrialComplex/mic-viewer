@@ -71,6 +71,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mic-viewer-create"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "mic-viewer",
+ "mic-viewer-surveyor",
+ "serde_json",
+]
+
+[[package]]
 name = "mic-viewer-demo"
 version = "0.1.0"
 dependencies = [
