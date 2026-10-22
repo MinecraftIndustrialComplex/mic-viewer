@@ -94,11 +94,11 @@ pub fn layer_descs() -> Vec<LayerDesc> {
                 LegendEntry::new("Train derailed", BAD).glyph("train").st("bad"),
             ]),
         LayerDesc::new(MACHINES, "Factories", "Machines", "point", "ink")
-            .describe("Create machines and generators read from the world's blocks (presses, mixers, crafters, saws, fans, wheels, engines), grouped where they stand together.")
+            .describe("Create machines and generators read from the world's blocks (presses, mixers, crafters, saws, fans, wheels, engines), grouped where they stand together. Furnaces, smokers and other vanilla blocks show only inside a district: alone they are not industry.")
             .glyph("circle", 6.0)
             .zoom(0.0, SITE_BPP)
             .priority(50)
-            .labels_below(0.6)
+            .labels_below(0.35)
             .legend_entries(vec![
                 LegendEntry::new("Processing machine", "ink").glyph("circle"),
                 LegendEntry::new("Power source", "ink").glyph("triangle"),
@@ -342,10 +342,25 @@ fn state_of<'a>(things: impl IntoIterator<Item = &'a Thing>) -> Option<&'static 
 }
 
 /// Groups of things of one id standing within two blocks of each other.
+/// What a block that never starts a district is for, in a word: its group's label leads with it.
+fn activity(t: &Thing) -> Option<&'static str> {
+    if !t.member_only {
+        return None;
+    }
+    Some(match t.id.rsplit(':').next().unwrap_or("") {
+        "brewing_stand" => "Brewing",
+        "crafter" => "Crafting",
+        _ => "Smelting",
+    })
+}
+
+/// Machines of one kind side by side, as groups: the same block within 2 of each other, or for
+/// blocks that only join a district (furnaces and the like), the same activity within 4.
 fn groups<'a>(things: &[&'a Thing]) -> Vec<Vec<&'a Thing>> {
-    let mut at: HashMap<(&str, [i32; 3]), usize> = HashMap::new();
+    let key = |t: &Thing| activity(t).map_or_else(|| t.id.clone(), |a| format!("#{a}"));
+    let mut at: HashMap<(String, [i32; 3]), usize> = HashMap::new();
     for (k, t) in things.iter().enumerate() {
-        at.insert((t.id.as_str(), t.pos), k);
+        at.insert((key(t), t.pos), k);
     }
     let mut parent: Vec<usize> = (0..things.len()).collect();
     fn find(p: &mut [usize], x: usize) -> usize {
@@ -362,10 +377,12 @@ fn groups<'a>(things: &[&'a Thing]) -> Vec<Vec<&'a Thing>> {
         r
     }
     for (k, t) in things.iter().enumerate() {
-        for dx in -2..=2 {
-            for dy in -2..=2 {
-                for dz in -2..=2 {
-                    if let Some(&o) = at.get(&(t.id.as_str(), [t.pos[0] + dx, t.pos[1] + dy, t.pos[2] + dz])) {
+        let r = if t.member_only { 4 } else { 2 };
+        let kt = key(t);
+        for dx in -r..=r {
+            for dy in -r..=r {
+                for dz in -r..=r {
+                    if let Some(&o) = at.get(&(kt.clone(), [t.pos[0] + dx, t.pos[1] + dy, t.pos[2] + dz])) {
                         let (a, b) = (find(&mut parent, k), find(&mut parent, o));
                         if a != b {
                             parent[a] = b;
@@ -381,6 +398,31 @@ fn groups<'a>(things: &[&'a Thing]) -> Vec<Vec<&'a Thing>> {
         by.entry(r).or_default().push(*t);
     }
     by.into_values().collect()
+}
+
+/// A group's label: "3 mechanical presses"; "Smelting: 14 furnaces" or "Smelting: 9 furnaces,
+/// 5 smokers" for blocks that only join a district, and none for one of those alone (a furnace
+/// says nothing a glyph and its card do not).
+fn group_label(g: &[&Thing]) -> Option<String> {
+    let first = g[0];
+    let Some(what) = activity(first) else {
+        return Some(plural(g.len(), &first.name()));
+    };
+    if g.len() == 1 {
+        return None;
+    }
+    let mut by: BTreeMap<String, usize> = BTreeMap::new();
+    for t in g {
+        *by.entry(t.name()).or_insert(0) += 1;
+    }
+    let mut parts: Vec<(String, usize)> = by.into_iter().collect();
+    parts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    // A lone kind among others still reads as a count: "9 furnaces, 1 smoker".
+    let list: Vec<String> = parts
+        .iter()
+        .map(|(name, n)| if *n == 1 { format!("1 {}", name.to_lowercase()) } else { plural(*n, name) })
+        .collect();
+    Some(format!("{what}: {}", list.join(", ")))
 }
 
 fn plural(n: usize, one: &str) -> String {
@@ -421,10 +463,10 @@ pub fn block_marks(things: &[Thing], dim: &str, w: &mut SceneWriter) {
             Kind::Mover => ("diamond", 2),
             _ => ("circle", 0),
         };
-        let mut m = Mark::point(block_id(first.pos, dim), sx / n as f64, sz / n as f64)
-            .with_glyph(glyph)
-            .with_ci(ci)
-            .with_label(plural(n, &first.name()));
+        let mut m = Mark::point(block_id(first.pos, dim), sx / n as f64, sz / n as f64).with_glyph(glyph).with_ci(ci);
+        if let Some(l) = group_label(&g) {
+            m = m.with_label(l);
+        }
         if n > 1 {
             m = m.with_size(1.0 + (n as f64).ln() * 0.35);
         }
@@ -1209,6 +1251,28 @@ mod tests {
             Some(([1, 2, 3], "minecraft:the_nether".into()))
         );
         assert_eq!(parse_block_id("x"), None);
+    }
+
+    #[test]
+    fn utility_blocks_group_by_activity_and_a_lone_one_says_nothing() {
+        let t = |id: &str, x: i32| Thing {
+            pos: [x, 64, 0],
+            id: id.into(),
+            kind: Kind::Machine,
+            net: None,
+            speed: 0.0,
+            active: None,
+            member_only: id.starts_with("minecraft:"),
+            detail: Detail::None,
+        };
+        let row: Vec<Thing> = (0..9)
+            .map(|x| t("minecraft:furnace", x))
+            .chain([t("minecraft:smoker", 12), t("minecraft:furnace", 40), t("create:mechanical_press", 1)])
+            .collect();
+        let refs: Vec<&Thing> = row.iter().collect();
+        let mut labels: Vec<Option<String>> = groups(&refs).iter().map(|g| group_label(g)).collect();
+        labels.sort();
+        assert_eq!(labels, [None, Some("Mechanical press".into()), Some("Smelting: 9 furnaces, 1 smoker".into())]);
     }
 
     #[test]

@@ -140,6 +140,11 @@ pub struct Thing {
     /// Whether it works now, where the save says: turning for a kinetic block, lit for a furnace.
     /// None for a block with no such state (a spout, a blaze heater).
     pub active: Option<bool>,
+    /// Never starts a district, only joins one that exists (rtsim's DS-10): anything in the
+    /// `minecraft` namespace, and a furnace of any mod (a block entity that saves `BurnTime` and
+    /// `CookTime`, as every AbstractFurnaceBlockEntity does). Furnaces are everywhere in builds
+    /// that have nothing to do with industry, so a host draws these only inside a district.
+    pub member_only: bool,
     pub detail: Detail,
 }
 
@@ -404,7 +409,8 @@ pub fn thing(be: &Tag) -> Option<Thing> {
         }
         _ => Detail::None,
     };
-    Some(Thing { pos, id, kind, net, speed, active, detail })
+    let member_only = id.starts_with("minecraft:") || be.get("BurnTime").is_some() && be.get("CookTime").is_some();
+    Some(Thing { pos, id, kind, net, speed, active, member_only, detail })
 }
 
 /// The region folder of a dimension.
@@ -1120,5 +1126,15 @@ mod tests {
         assert!(spout.running() && !spout.idle());
         let still = thing(&be("create:mechanical_press", [3, 0, 0], vec![("Speed", Tag::Float(0.0))])).unwrap();
         assert!(still.idle());
+    }
+
+    #[test]
+    fn vanilla_blocks_and_furnaces_of_any_mod_only_join_a_district() {
+        assert!(thing(&be("minecraft:furnace", [0, 0, 0], vec![])).unwrap().member_only);
+        assert!(thing(&be("minecraft:chest", [0, 0, 0], vec![])).unwrap().member_only);
+        let modded = be("othermod:alloy_kiln", [0, 0, 0], vec![("BurnTime", Tag::Int(0)), ("CookTime", Tag::Int(0))]);
+        assert!(thing(&modded).unwrap().member_only);
+        assert!(!thing(&be("create:mechanical_press", [0, 0, 0], vec![])).unwrap().member_only);
+        assert!(!thing(&be("create:spout", [0, 0, 0], vec![])).unwrap().member_only);
     }
 }
