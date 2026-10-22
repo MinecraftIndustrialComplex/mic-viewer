@@ -1105,6 +1105,72 @@ pub fn find(rail: &Rail, frame_of: &dyn Fn(i32) -> String, q: &str, limit: usize
     out
 }
 
+/// Things read so far in `dim` (frame `frame`) whose kind, address or gauge product matches `q`,
+/// scored as [`find`] scores names plus 3, so the rail and the districts come first.
+pub fn find_things<'a>(
+    things: impl IntoIterator<Item = &'a Thing>,
+    dim: &str,
+    frame: &str,
+    q: &str,
+) -> Vec<(u8, Found)> {
+    let q = q.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let score = |name: &str| -> Option<u8> {
+        let n = name.to_lowercase();
+        if n == q {
+            Some(3)
+        } else if n.starts_with(&q) {
+            Some(4)
+        } else if n.contains(&q) {
+            Some(5)
+        } else {
+            None
+        }
+    };
+    let mut out = Vec::new();
+    for t in things {
+        let layer = match t.kind {
+            Kind::Machine | Kind::Power | Kind::Mover => MACHINES,
+            Kind::Gauge => GAUGES,
+            Kind::Storage => STORAGE,
+            Kind::Port => PORTS,
+            Kind::Chain => CHAINS,
+            Kind::Belt => BELTS,
+            Kind::Container | Kind::Other => continue,
+        };
+        let name = t.name();
+        // What it is called for: an address, the products a gauge keeps in stock.
+        let mut what: Vec<String> = match &t.detail {
+            Detail::Address(a) | Detail::Frogport { address: a, .. } if !a.is_empty() => vec![a.clone()],
+            Detail::Gauge(slots) => slots.iter().map(|s| humanize(&s.item)).collect(),
+            _ => Vec::new(),
+        };
+        what.retain(|w| !w.is_empty());
+        let best = what
+            .iter()
+            .filter_map(|w| score(w).map(|sc| (sc, format!("{w}: {}", name.to_lowercase()))))
+            .chain(score(&name).map(|sc| (sc, name.clone())))
+            .min_by(|a, b| a.0.cmp(&b.0));
+        let Some((sc, label)) = best else { continue };
+        let c = center(t.pos);
+        out.push((
+            sc,
+            Found {
+                layer: layer.into(),
+                id: block_id(t.pos, dim),
+                label: format!("{label}, at {}, {}", t.pos[0], t.pos[2]),
+                kind: name,
+                frame: frame.to_owned(),
+                x: c[0],
+                z: c[1],
+            },
+        ));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -699,6 +699,14 @@ impl Survey {
         lock(&self.state.0).things.contains_key(&(dim.to_owned(), cx, cz))
     }
 
+    /// The dimensions with things read.
+    pub fn dims(&self) -> Vec<String> {
+        let mut d: Vec<String> = lock(&self.state.0).things.keys().map(|k| k.0.clone()).collect();
+        d.sort_unstable();
+        d.dedup();
+        d
+    }
+
     /// The things read in `dim`, chunk by chunk.
     pub fn all(&self, dim: &str) -> Vec<Arc<Vec<Thing>>> {
         lock(&self.state.0)
