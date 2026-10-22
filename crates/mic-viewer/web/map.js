@@ -127,6 +127,20 @@
   // The map
   // ------------------------------------------------------------------------------------------------
 
+  /**
+   * The centre and zoom that fit `box` (`[x0, z0, x1, z1]` blocks) into a `w` x `h` CSS px view
+   * less `pad` (`{ left, right, top, bottom }` CSS px a panel covers), with a little room round it.
+   * The box sits in the middle of what is left; a pad that leaves too little is partly ignored.
+   */
+  function fitView(box, w, h, pad) {
+    const p = pad || {};
+    const l = p.left || 0, r = p.right || 0, t = p.top || 0, b = p.bottom || 0;
+    const W = Math.max(w - l - r, w * 0.4, 1), H = Math.max(h - t - b, h * 0.4, 1);
+    const bpp = Math.max((box[2] - box[0]) / W, (box[3] - box[1]) / H) * 1.06;
+    const sx = w - l - r >= w * 0.4 ? (l - r) / 2 : 0, sy = h - t - b >= h * 0.4 ? (t - b) / 2 : 0;
+    return { cx: (box[0] + box[2]) / 2 - sx * bpp, cz: (box[1] + box[3]) / 2 - sy * bpp, bpp };
+  }
+
   function createMap(opts) {
     const canvas = opts.canvas;
     const ctx = canvas.getContext('2d');
@@ -135,9 +149,13 @@
     let extent = opts.extent || null;
     let background = opts.background || '#04060a';
     let tileFilter = opts.tileFilter || null;
-    const minBppOpt = opts.minBpp != null ? opts.minBpp : 1 / 4;
+    const minBppOpt = opts.minBpp != null ? opts.minBpp : 1 / 16;
     const maxBppOpt = opts.maxBpp != null ? opts.maxBpp : null;
     const onView = opts.onView || null, onHover = opts.onHover || null;
+    // What panels cover of the map now (`{ left, right, top, bottom }` CSS px), for fitting a box
+    // into the rest; and the box last asked for, which the Home key goes back to.
+    const homePad = opts.homePad || null;
+    let homeBox = null;
     const onClick = opts.onClick || null, onKey = opts.onKey || null;
     const overlays = opts.overlays || [];
     let scaleBar = opts.scaleBar === false ? null : Object.assign({ right: 12, bottom: 12 }, opts.scaleBar || {});
@@ -201,9 +219,13 @@
     }
 
     function home(box) {
+      const fit = e => {
+        const v = fitView(e, V.w, V.h, homePad ? homePad() : null);
+        setView(v.cx, v.cz, v.bpp);
+      };
       // A flat frame may name where it opens (its built-up part), inside its extent.
       if (box && !(P() > 0) && box[2] > box[0] && box[3] > box[1]) {
-        setView((box[0] + box[2]) / 2, (box[1] + box[3]) / 2, fitBpp(box) * 1.06);
+        fit(box);
         return;
       }
       const e = ext();
@@ -212,7 +234,7 @@
         const zr = projection.zRange;
         setView(cx, zr ? (zr[0] + zr[1]) / 2 : e ? (e[1] + e[3]) / 2 : 0, maxBpp());
       } else if (e) {
-        setView((e[0] + e[2]) / 2, (e[1] + e[3]) / 2, fitBpp(e) * 1.06);
+        fit(e);
       } else {
         setView(0, 0, 8);
       }
@@ -516,7 +538,7 @@
       else if (k === 'ArrowDown') setView(V.cx, V.cz + V.h * step, V.bpp);
       else if (k === '+' || k === '=') zoomAt(V.w / 2, V.h / 2, 1.6);
       else if (k === '-' || k === '_') zoomAt(V.w / 2, V.h / 2, 1 / 1.6);
-      else if (k === '0' || k === 'Home') home();
+      else if (k === '0' || k === 'Home') home(homeBox);
       else used = onKey ? !!onKey(ev) : false;
       if (used) {
         ev.preventDefault();
@@ -570,10 +592,12 @@
       get projection() { return projection; },
       get pyramid() { return pyramid; },
       get cursor() { return cursor ? cursor.slice() : null; },
-      /** Fits the frame's extent, or `box` (`[x0, z0, x1, z1]`, a flat frame's) when given. */
+      /** Fits the frame's extent, or `box` (`[x0, z0, x1, z1]`, a flat frame's) when given, into
+       *  what the panels leave (`opts.homePad`). The Home key goes back to the same box. */
       home(box) {
         resize();
-        home(box || null);
+        homeBox = box || null;
+        home(homeBox);
       },
       zoomAt,
       toWorld,
@@ -620,6 +644,6 @@
     return api;
   }
 
-  Object.assign(MV, { T, wrap, niceStep, fmtInt, zoomFor, tileCover, tileInBounds, tileFilterFor, copiesIn, createMap });
+  Object.assign(MV, { T, wrap, niceStep, fmtInt, zoomFor, tileCover, tileInBounds, tileFilterFor, copiesIn, fitView, createMap });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 })();

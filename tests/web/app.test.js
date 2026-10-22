@@ -195,6 +195,27 @@ test('fmtDayAt and fmtSourceTime: the header line', () => {
   assert.equal(MV.fmtSourceTime(undefined, null, 24000), 'Save');
 });
 
+test('fmtStatus: the header line as sentences, the source not said twice', () => {
+  const tick = 3467 * 24000 + 5000;
+  assert.deepEqual(MV.fmtStatus('save', tick, 24000, 'a save: nothing moves'), ['Save, day 3,467 at 11:00.', 'Nothing moves.']);
+  assert.deepEqual(MV.fmtStatus('save', tick, 24000, 'nothing moves'), ['Save, day 3,467 at 11:00.', 'Nothing moves.']);
+  assert.deepEqual(MV.fmtStatus('live', tick, 24000, 'updated 3 s ago'), ['Live, day 3,467 at 11:00.', 'Updated 3 s ago.']);
+  assert.deepEqual(MV.fmtStatus('live', null, 24000, 'reconnecting'), ['Live.', 'Reconnecting.']);
+  assert.deepEqual(MV.fmtStatus('save', tick, 24000, ''), ['Save, day 3,467 at 11:00', '']);
+  assert.deepEqual(MV.fmtStatus('save', tick, 24000, 'Saved by hand!'), ['Save, day 3,467 at 11:00.', 'Saved by hand!']);
+  assert.equal(MV.sentence('  '), '');
+});
+
+test('layerCount: what is on screen, the total for cells, nothing before a draw', () => {
+  const pts = { kinds: ['point'] }, cells = { kinds: ['cell'] };
+  assert.deepEqual(MV.layerCount(pts, { total: 900, shown: 900 }, 12), { text: '12', title: '12 on screen' });
+  assert.equal(MV.layerCount(pts, { total: 900, shown: 900, clustered: true }, 1234).title, '1,234 on screen, grouped where they crowd');
+  assert.match(MV.layerCount(pts, { total: 900, shown: 500 }, 40).title, /not every one is drawn/);
+  assert.deepEqual(MV.layerCount(pts, { total: 900, shown: 900 }, undefined), { text: '', title: '' });
+  assert.deepEqual(MV.layerCount(pts, null, 5), { text: '', title: '' });
+  assert.deepEqual(MV.layerCount(cells, { total: 77 }, 0), { text: '77', title: '77 in view' });
+});
+
 test('keyGroups: layers in panel order, legend order, the layer style last', () => {
   const layers = [
     { id: 'a', label: 'Villages', legend: [{ label: 'Human' }, { label: 'Ribbit' }, { label: 'Haven' }] },
@@ -210,6 +231,12 @@ test('keyGroups: layers in panel order, legend order, the layer style last', () 
   assert.deepEqual(g[2].entries, [{ index: 0, label: 'Bison' }, { index: -1, label: 'Other' }]);
   assert.deepEqual(MV.keyGroups({ b: [-1] }, layers).map(x => x.entries[0].label), ['Roads']);
   assert.deepEqual(MV.keyGroups(null, layers), []);
+  // Count bubbles drawn: a last row saying what one is, drawn as a bubble.
+  const withBubbles = MV.keyGroups(seen, layers, { clusters: 3 });
+  const last = withBubbles[withBubbles.length - 1];
+  assert.deepEqual(last.layer.kinds, ['cluster']);
+  assert.deepEqual(last.entries, [{ index: -1, label: last.layer.label }]);
+  assert.equal(MV.keyGroups(seen, layers, { clusters: 0 }).length, 3);
 });
 
 test('seenFromAnswers: legend indices from the marks held, clusters by their counts', () => {

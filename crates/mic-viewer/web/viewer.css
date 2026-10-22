@@ -275,15 +275,16 @@ button, select, input { font: inherit; color: inherit; }
 /* The base map: a segmented choice, muting, overlays */
 .seg { display: inline-flex; flex: none; border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; }
 .seg button {
-  height: 26px; padding: 0 10px; border: 0; background: var(--bg-1); color: var(--fg-2);
-  font-size: 12px; cursor: pointer; white-space: nowrap;
+  flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 8px; border: 0; background: var(--bg-1); color: var(--fg-2);
+  font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .seg button + button { border-left: 1px solid var(--line-2); }
 .seg button:hover { background: var(--bg-2); color: var(--fg); }
 .seg button[aria-pressed="true"] { background: var(--bg-3); color: var(--fg); font-weight: 600; }
 .seg button:focus-visible { outline-offset: -2px; }
 .base { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 0 8px 4px; }
-.base .seg { min-width: 0; }
+/* The choice takes the column's width and its buttons share it, cut short before one falls out. */
+.base .seg { display: flex; flex: 1 1 100%; min-width: 0; }
 .mute { display: inline-flex; align-items: center; gap: 6px; color: var(--fg-2); font-size: 12px; cursor: pointer; white-space: nowrap; }
 .mute input { margin: 0; accent-color: var(--accent); }
 
@@ -352,26 +353,26 @@ button, select, input { font: inherit; color: inherit; }
 }
 
 /* The key: every symbol drawn on screen, by layer */
+/* A fixed width (the map's opening fit leaves room for it, app.js KEY_W), and past about two fifths
+   of the stage it scrolls inside. */
 .key {
   position: absolute; left: 12px; bottom: 12px; z-index: 3;
-  display: flex; flex-direction: column; min-width: 150px; max-width: 260px; max-height: calc(100% - 24px);
+  display: flex; flex-direction: column; width: 224px; max-height: min(calc(100% - 24px), max(220px, 42%));
   background: var(--bg-1); border: 1px solid var(--line-2); border-radius: 4px;
 }
 .key-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none;
-  height: 28px; padding: 0 6px 0 10px; border: 0; border-radius: 4px; background: none;
+  height: 26px; padding: 0 6px 0 10px; border: 0; border-radius: 4px; background: none;
   font-size: 12px; font-weight: 600; color: var(--fg); cursor: pointer; text-align: left;
 }
 .key-head:hover { background: var(--bg-2); }
 .key-head .icon { width: 14px; height: 14px; color: var(--fg-3); transition: transform 0.12s; transform: rotate(-90deg); }
 .key-head[aria-expanded="true"] .icon { transform: rotate(90deg); }
 .key-head[aria-expanded="true"] { border-radius: 4px 4px 0 0; }
-.key-body { overflow-y: auto; min-height: 0; padding: 4px 10px 2px; border-top: 1px solid var(--line); }
-.key-grp { break-inside: avoid; padding-bottom: 6px; }
-.key.two { max-width: 440px; }
-.key.two .key-body { columns: 2; column-gap: 18px; }
-.key-grp h3 { font-size: 11px; font-weight: 600; color: var(--fg-3); margin: 2px 0 1px; }
-.key-grp li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 18px; font-size: 12px; }
+.key-body { overflow-y: auto; overscroll-behavior: contain; min-height: 0; padding: 2px 8px 2px 10px; border-top: 1px solid var(--line); }
+.key-grp { padding-bottom: 3px; }
+.key-grp h3 { font-size: 11px; font-weight: 600; color: var(--fg-3); margin: 3px 0 0; line-height: 15px; }
+.key-grp li { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 6px; min-height: 16px; font-size: 12px; line-height: 16px; }
 .key-grp li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The bottom-right cluster: zoom buttons over the scale bar (drawn by map.js) over the readout.
@@ -562,7 +563,7 @@ button, select, input { font: inherit; color: inherit; }
   .world-name { flex: 1 1 auto; }
   .frame-pick { flex: 0 1 auto; }
   .select { max-width: 124px; height: 36px; }
-  .find { position: static; flex: 0 1 140px; min-width: 90px; }
+  .find { flex: 0 1 140px; min-width: 90px; }
   .find-q { height: 36px; }
   .find .icon { top: 10px; left: 8px; }
   .find-list { position: fixed; top: 56px; left: 16px; right: 16px; }
@@ -584,7 +585,7 @@ button, select, input { font: inherit; color: inherit; }
   .zoom, .stage.card-open .zoom { right: 16px; bottom: 70px; }
   .stage.card-open .readout { right: 16px; }
   .zoom .btn { width: 38px; height: 38px; }
-  .key { left: 16px; bottom: 16px; max-width: calc(100% - 100px); max-height: 45%; }
+  .key { left: 16px; bottom: 16px; width: min(224px, calc(100% - 100px)); max-height: 45%; }
 
   .side, .tl-panel, .card {
     position: fixed; z-index: 20; left: 0; right: 0; bottom: 0; top: auto;

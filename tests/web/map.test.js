@@ -39,6 +39,22 @@ test('wrap folds x into [-period/2, period/2)', () => {
   assert.equal(MV.wrap(4096 * 7 + 12, 4096), 12);
 });
 
+test('fitView fits a box into what the panels leave and centres it there', () => {
+  // No panels: the box's middle in the view's, 6% of room.
+  const a = MV.fitView([0, 0, 100, 50], 200, 100, null);
+  assert.deepEqual([a.cx, a.cz], [50, 25]);
+  assert.ok(Math.abs(a.bpp - 0.53) < 1e-9);
+  // A 100 px key on the left: the box fits the 100 px right of it, its middle 50 px right of the view's.
+  const b = MV.fitView([0, 0, 100, 50], 200, 100, { left: 100 });
+  assert.ok(Math.abs(b.bpp - 1.06) < 1e-9);
+  const mid = 100 + (50 - b.cx) / b.bpp;   // the box's middle, px from the view's left edge
+  assert.ok(Math.abs(mid - 150) < 1e-9, `middle at ${mid}`);
+  // A pad that leaves too little is not honoured past 40% of the view.
+  const c = MV.fitView([0, 0, 100, 50], 200, 100, { left: 190 });
+  assert.ok(Math.abs(c.bpp - 100 / 80 * 1.06) < 1e-9);
+  assert.equal(c.cx, 50);
+});
+
 test('niceStep is 1, 2 or 5 times a power of ten, not above v', () => {
   const cases = [[0.7, 0.5], [1, 1], [1.9, 1], [2, 2], [7, 5], [999, 500], [1000, 1000], [2500, 2000], [0.03, 0.02]];
   for (const [v, want] of cases) assert.ok(Math.abs(MV.niceStep(v) - want) < 1e-12, `niceStep(${v})`);

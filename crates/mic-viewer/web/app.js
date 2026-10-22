@@ -174,13 +174,54 @@
     return tick == null ? name : `${name}, ${fmtDayAt(tick, tpd)}`;
   }
 
+  /** `s` as a sentence: a capital first, a full stop last ("" stays ""). */
+  function sentence(s) {
+    s = String(s || '').trim();
+    if (!s) return '';
+    s = s.charAt(0).toUpperCase() + s.slice(1);
+    return /[.!?…]$/.test(s) ? s : s + '.';
+  }
+
+  /**
+   * The header's status as two sentences, `[clock, note]`: "Save, day 3,467 at 11:46." and
+   * "Nothing moves." A note that starts by naming the source again ("a save: nothing moves") drops
+   * that; with no note the clock has no full stop.
+   */
+  function fmtStatus(source, tick, tpd, note) {
+    const head = fmtSourceTime(source, tick, tpd);
+    const name = (SOURCES[source] || source || 'save').toLowerCase();
+    const rest = String(note || '').trim().replace(new RegExp(`^(?:(?:a|an|the)\\s+)?${name.replace(/[^a-z0-9]/g, '.')}\\s*:\\s*`, 'i'), '');
+    return rest ? [sentence(head), sentence(rest)] : [head, ''];
+  }
+
+  /**
+   * A layer's count in the panel, `{ text, title }`: what is on screen now (`drawn`, from the last
+   * draw), so it does not move with how far round the view the last answer reached. A layer of
+   * cells (never counted on screen) shows the answer's total; nothing yet shows nothing.
+   */
+  function layerCount(d, data, drawn) {
+    const cells = (d.kinds || []).length > 0 && d.kinds.every(k => k === 'cell');
+    if (data && cells) return { text: fmtCount(data.total), title: `${groupInt(data.total)} in view` };
+    if (!data || drawn == null) return { text: '', title: '' };
+    const title = data.clustered ? `${groupInt(drawn)} on screen, grouped where they crowd`
+      : data.shown < data.total ? `${groupInt(drawn)} on screen; not every one is drawn at this zoom` : `${groupInt(drawn)} on screen`;
+    return { text: fmtCount(drawn), title };
+  }
+
+  /** The key's row for count bubbles: a layer of its own, after the layers, when any is drawn. */
+  const CLUSTER_KEY = {
+    id: '_clusters', label: 'Many in one place: zoom in', kinds: ['cluster'], style: { color: 'ink' }, legend: [],
+    description: 'A bubble stands for that many things too close together to draw one by one.',
+  };
+
   /**
    * What the map key lists: for each layer drawn (in `layers` order) the symbols on screen, from
    * `seen` (a Map, or an object, of layer id to the legend indices drawn, -1 for the layer's own
    * style). Each group: `{ layer, entries: [{ index, label }] }`, legend order, the layer's own
-   * style last (named after the layer, or "Other" beside legend entries).
+   * style last (named after the layer, or "Other" beside legend entries). With `opts.clusters`
+   * (count bubbles drawn) a last group says what a bubble is.
    */
-  function keyGroups(seen, layers) {
+  function keyGroups(seen, layers, opts) {
     const out = [];
     if (!seen) return out;
     const get = id => (typeof seen.get === 'function' ? seen.get(id) : seen[id]);
@@ -195,6 +236,7 @@
       const entries = idx.map(i => ({ index: i, label: i >= 0 ? legend[i].label : idx.length > 1 ? 'Other' : d.label }));
       out.push({ layer: d, entries });
     }
+    if (opts && opts.clusters > 0) out.push({ layer: CLUSTER_KEY, entries: [{ index: -1, label: CLUSTER_KEY.label }] });
     return out;
   }
 
@@ -555,14 +597,15 @@
       showTip(hit, px, py);
     }
 
-    function activate(hit) {
+    /** Opens what `hit` is (`at`: the world point picked, kept in view of the card). */
+    function activate(hit, at) {
       if (!hit) return false;
       if (hit.cluster) {
         flyTo(hit.wx, hit.wz, map.view.bpp / 3);
         return true;
       }
       if (hit.id != null) {
-        openCard(hit.layer, hit.id, {});
+        openCard(hit.layer, hit.id, { at });
         return true;
       }
       return false;
@@ -571,7 +614,7 @@
     function onClick(x, z, px, py) {
       if (!A.ready) return;
       const hit = A.lastDraw ? MV.pick(A.lastDraw.targets, px, py) : null;
-      if (!activate(hit) && A.card) closeCard();
+      if (!activate(hit, [x, z]) && A.card) closeCard();
     }
 
     function onKey(ev) {
@@ -579,7 +622,7 @@
         // The mark under the pointer, else the one at the centre.
         const v = map.view;
         const p = A.cursorPx || [v.w / 2, v.h / 2];
-        return activate(A.lastDraw ? MV.pick(A.lastDraw.targets, p[0], p[1]) : null);
+        return activate(A.lastDraw ? MV.pick(A.lastDraw.targets, p[0], p[1]) : null, map.toWorld(p[0], p[1]));
       }
       return false;
     }
@@ -613,6 +656,14 @@
         A.flight = k < 1 ? requestAnimationFrame(step) : 0;
       };
       A.flight = requestAnimationFrame(step);
+    }
+
+    /** `flyTo`, landing (x, z) in the middle of the part of the map no panel covers. */
+    function flyShown(x, z, bpp) {
+      const v = map.view;
+      const target = clamp(bpp || Math.min(v.bpp, 4), map.minBpp(), map.maxBpp());
+      const [x0, y0, x1, y1] = openPart();
+      flyTo(x - ((x0 + x1) / 2 - v.w / 2) * target, z - ((y0 + y1) / 2 - v.h / 2) * target, target);
     }
 
     // ----------------------------------------------------------------------------------------------
@@ -899,7 +950,8 @@
             const b = el('button', null, d.label || d.id);
             b.type = 'button';
             b.dataset.base = d.id;
-            if (d.attribution) b.title = d.attribution;
+            // A label cut short in a narrow column is still said in full on hover.
+            b.title = d.attribution ? `${d.label || d.id}. ${d.attribution}` : d.label || d.id;
             b.addEventListener('click', () => setBase(d.id || null));
             seg.appendChild(b);
           }
@@ -993,18 +1045,10 @@
         const hint = zoomHint(d, bpp);
         row.classList.toggle('outzoom', !!hint);
         const count = row.querySelector('.lcount');
-        const data = A.marks.layers[d.id];
         if (hint) {
           count.textContent = hint === 'in' ? 'zoom in' : 'zoom out';
           count.title = hint === 'in' ? `${d.label}: drawn when zoomed in further` : `${d.label}: drawn when zoomed out further`;
-        } else if (!on || !data) {
-          count.textContent = '';
-          count.title = '';
-        } else {
-          count.textContent = fmtCount(data.total);
-          count.title = data.clustered ? `${fmtInt(data.total)} in view, grouped where they crowd`
-            : data.shown < data.total ? `${fmtInt(data.shown)} of ${fmtInt(data.total)} in view drawn` : `${fmtInt(data.total)} in view`;
-        }
+        } else setCount(d, count, on);
         row.classList.toggle('nopast', A.t != null && on && !d.has_past);
         const detail = row.querySelector('.ldetail');
         let note = detail.querySelector('.lempty');
@@ -1031,6 +1075,24 @@
       A.notHere.title.textContent = `Not in this world (${n})`;
     }
     const updateCounts = () => syncRows();
+
+    /** A layer's count cell from the last draw (blank while the layer is off or not yet drawn). */
+    function setCount(d, cell, on) {
+      const drawn = A.lastDraw && A.lastDraw.counts ? A.lastDraw.counts.get(d.id) : undefined;
+      const c = on ? layerCount(d, A.marks.layers[d.id], drawn) : { text: '', title: '' };
+      if (cell.textContent !== c.text) cell.textContent = c.text;
+      cell.title = c.title;
+    }
+
+    /** The counts alone, after a draw (on the key's clock, not every frame). */
+    function syncCounts() {
+      if (!A.rows || !map) return;
+      for (const d of A.layers) {
+        const row = A.rows.get(d.id);
+        if (!row || row.classList.contains('outzoom')) continue;
+        setCount(d, row.querySelector('.lcount'), A.on.has(d.id));
+      }
+    }
     let zoomRowsTimer = 0;
     function updateZoomRows() {
       if (zoomRowsTimer) return;
@@ -1056,13 +1118,11 @@
 
     function updateKey() {
       if (!A.ready) return;
+      syncCounts();
       const seen = A.lastDraw && A.lastDraw.seen && typeof A.lastDraw.seen.get === 'function' ? A.lastDraw.seen : seenFromAnswers(drawList());
-      const groups = keyGroups(seen, A.layers);
+      const groups = keyGroups(seen, A.layers, { clusters: A.lastDraw ? A.lastDraw.clusters : 0 });
       const sig = groups.map(g => g.layer.id + ':' + g.entries.map(e => e.index).join(',')).join('|');
-      if (sig === keySig) {
-        fitKey();
-        return;
-      }
+      if (sig === keySig) return;
       keySig = sig;
       keyBox.hidden = !groups.length;
       keyBody.textContent = '';
@@ -1081,29 +1141,15 @@
         box.appendChild(ul);
         keyBody.appendChild(box);
       }
-      keyFit = null;
-      fitKey();
     }
 
-    // A key too long for the stage goes to two columns, and scrolls only when two do not fit.
-    let keyFit = null;
-    function fitKey() {
-      const at = `${innerWidth}x${innerHeight} ${keyBody.hidden} ${keyBox.hidden}`;
-      if (at === keyFit) return;
-      keyFit = at;
-      keyBox.classList.remove('two');
-      if (keyBody.hidden || keyBox.hidden || phoneMQ.matches) return;
-      if (keyBody.scrollHeight <= keyBody.clientHeight + 1) return;
-      keyBox.classList.add('two');
-      if (keyBody.scrollWidth > keyBody.clientWidth + 1) keyBox.classList.remove('two');
-    }
-
+    // The key is a fixed width and scrolls inside past a height (viewer.css); its open or shut
+    // choice is remembered.
     function setKeyOpen(open, quiet) {
       keyBody.hidden = !open;
       keyHead.setAttribute('aria-expanded', String(open));
       keyHead.title = open ? 'Hide the key' : 'Show the key';
       if (!quiet) store.set('key', open);
-      fitKey();
     }
     keyHead.addEventListener('click', () => setKeyOpen(keyBody.hidden));
 
@@ -1116,7 +1162,7 @@
     const cardCtx = {
       layerOf: id => A.byId.get(id),
       onLink: (layer, id) => openCard(layer, id, { push: true, fly: true }),
-      onFly: at => flyTo(at[0], at[1]),
+      onFly: at => flyShown(at[0], at[1]),
       fmtTick: t => MV.fmtGameTime(t, A.tpd),
       fmtAt: at => `x ${fmtInt(Math.floor(at[0]))}, z ${fmtInt(Math.floor(at[1]))}`,
       swatch: d => swatchEl(d, null, 18, 12),
@@ -1129,7 +1175,7 @@
       A.card = { layer, id: String(id) };
       A.selected = A.card;
       showSheet('card');
-      loadCard({ fly: !!o.fly });
+      loadCard({ fly: !!o.fly, at: o.at || null, go: o.go || null });
       map.invalidate();
       scheduleHash();
     }
@@ -1148,10 +1194,15 @@
         const keep = cardBody.scrollTop;
         MV.renderCard(cardBody, card, cardCtx);
         if (o.quiet) cardBody.scrollTop = keep;
-        if (o.fly && card.at) flyTo(card.at[0], card.at[1]);
+        // Flown to (a link, back): to the middle of the map the card leaves open. Picked on the
+        // map: kept out from under the card once it has its height.
+        if (o.go) flyShown(o.go[0], o.go[1], o.go[2]);
+        else if (o.fly && card.at) flyShown(card.at[0], card.at[1]);
+        else if (o.at) reveal(o.at);
       }, e => {
         if (seq !== A.cardSeq) return;
         A.cardData = null;
+        if (o.go) flyShown(o.go[0], o.go[1], o.go[2]);
         const d = A.byId.get(ref.layer);
         MV.renderCardState(cardBody, e.status === 404
           ? { title: 'Not here', error: A.t != null ? `${d ? d.label : ref.layer} ${ref.id} did not exist at this time.` : `${d ? d.label : ref.layer} ${ref.id} is gone.` }
@@ -1211,6 +1262,53 @@
     // left of it. On a phone the card is a sheet and they stay put.
     // The scale bar sits between the readout (bottom) and the zoom buttons (viewer.css).
     const SCALE_FONT = '500 11px system-ui, -apple-system, "Segoe UI", sans-serif';
+
+    // What covers the map on a desk, for fitting the opening view into the rest: the key (bottom
+    // left, the strip above it too, to keep the fit simple) and an open card (right). On a phone
+    // the key is shut and sheets come and go, so nothing.
+    const KEY_W = 224;
+    function homePad() {
+      if (phoneMQ.matches) return null;
+      const pad = {};
+      if (!keyBody.hidden) pad.left = (keyBox.hidden ? KEY_W : keyBox.offsetWidth) + 24;
+      if (!cardBox.hidden) pad.right = cardBox.offsetWidth + 24;
+      return pad;
+    }
+
+    /**
+     * The part of the map not under a panel, in canvas px `[x0, y0, x1, y1]`: above a phone's sheet
+     * and below its floating source line, or left of a desk's card.
+     */
+    function openPart() {
+      const v = map.view, c = canvas.getBoundingClientRect();
+      let x0 = 0, y0 = 0, x1 = v.w, y1 = v.h;
+      if (!cardBox.hidden) {
+        const r = cardBox.getBoundingClientRect();
+        if (phoneMQ.matches) y1 = Math.min(y1, r.top - c.top);
+        else x1 = Math.min(x1, r.left - c.left);
+      }
+      const src = $('source');
+      if (phoneMQ.matches && src && src.offsetParent) y0 = Math.max(y0, src.getBoundingClientRect().bottom - c.top);
+      if (x1 - x0 < 80) { x0 = 0; x1 = v.w; }
+      if (y1 - y0 < 80) { y0 = 0; y1 = v.h; }
+      return [x0, y0, x1, y1];
+    }
+
+    /**
+     * Brings world point `at` (`[x, z]`) into the open part of the map when a panel covers it (a
+     * phone's card sheet over what was tapped, a desk's card over what was found): moves the view,
+     * not the zoom, so it sits in the middle of what is left. `always`: even when already in view.
+     */
+    function reveal(at, always) {
+      if (!map || !at) return;
+      const v = map.view;
+      const [x0, y0, x1, y1] = openPart();
+      const [sx, sy] = map.toScreen(at[0], at[1]);
+      const m = 24;
+      if (!always && sx >= x0 + m && sx <= x1 - m && sy >= y0 + m && sy <= y1 - m) return;
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+      flyTo(at[0] - (mx - v.w / 2) * v.bpp, at[1] - (my - v.h / 2) * v.bpp, v.bpp);
+    }
 
     function placeOverlays() {
       if (!map) return;
@@ -1378,9 +1476,13 @@
       const d = A.byId.get(r.layer);
       if (d && !A.on.has(r.layer)) setLayer(r.layer, true);
       const bpp = findBpp(d, map.view.bpp);
-      if (r.frame && r.frame !== A.frame && A.world.frames.some(f => f.id === r.frame)) await setFrame(r.frame, { x: r.x, z: r.z, bpp });
-      else if (r.x != null && r.z != null) flyTo(r.x, r.z, bpp);
-      openCard(r.layer, r.id, {});
+      if (r.frame && r.frame !== A.frame && A.world.frames.some(f => f.id === r.frame)) {
+        await setFrame(r.frame, { x: r.x, z: r.z, bpp });
+        openCard(r.layer, r.id, {});
+      } else {
+        // The flight waits for the card, to land what was found where the card leaves room.
+        openCard(r.layer, r.id, { go: r.x != null && r.z != null ? [r.x, r.z, bpp] : null });
+      }
     }
 
     findQ.addEventListener('input', () => {
@@ -1431,7 +1533,6 @@
       const st = stale();
       const down = !!(A.world.stream && !A.connected && A.helloSeen);
       badge.className = `source src-${src}${st ? ' stale' : ''}${down ? ' down' : ''}${A.time && A.time.running && !st && !down ? ' running' : ''}`;
-      $('src-text').textContent = fmtSourceTime(src, A.time ? nowTick() : null, A.tpd);
       let fresh = '';
       const f = A.fresh;
       const age = f && f.age_ms != null ? f.age_ms + (now() - A.freshAt) : null;
@@ -1439,8 +1540,11 @@
       else if (st) fresh = `stale, updated ${fmtAge(age)}`;
       else if (f && f.note) fresh = f.note;
       else if (f && f.cycle_ms) fresh = `updated ${fmtAge(age)}`;
-      $('src-fresh').textContent = fresh;
-      $('src-fresh').hidden = !fresh;
+      // One line read as sentences: "Save, day 3,467 at 11:46. Nothing moves."
+      const [head, note] = fmtStatus(src, A.time ? nowTick() : null, A.tpd, fresh);
+      $('src-text').textContent = head;
+      $('src-fresh').textContent = note;
+      $('src-fresh').hidden = !note;
       const bits = [A.world.source_note, A.world.build].filter(Boolean);
       badge.title = bits.join('. ');
     }
@@ -1700,7 +1804,8 @@
         pyramid: MV.squarePyramid({}),
         background: A.theme.paper,
         tileFilter: muted() ? A.muteFilter : null,
-        minBpp: 1 / 4,
+        minBpp: 1 / 16,
+        homePad,
         onView, onHover, onClick, onKey,
         overlays: [overlay],
         scaleBar: { right: 12, bottom: 40, ink: A.theme.ink, halo: A.theme.halo, font: SCALE_FONT },
@@ -1752,16 +1857,18 @@
 
       A.t = h.t != null && h.t < (world.time ? world.time.tick : Infinity) ? h.t : null;
       if (timeline && A.t != null) timeline.setT(A.t);
-      await setFrame(h.frame && world.frames.some(f => f.id === h.frame) ? h.frame : world.frames[0].id, h);
-      A.ready = true;
-      updatePast();
-      layoutChanged();
+      // The panels open before the first frame: its fit, and the first marks asked for, then see the
+      // map at the size it will be (the counts do not change once the side column comes).
       const phone = phoneMQ.matches;
       const sideOn = store.get('side');
       setSide(phone ? false : sideOn != null ? !!sideOn : true, true);
       if (timeline) setTimeline(!phone && !!store.get('timeline'), true);
       const keyOpen = store.get('key');
       setKeyOpen(phone ? false : keyOpen != null ? !!keyOpen : true, true);
+      await setFrame(h.frame && world.frames.some(f => f.id === h.frame) ? h.frame : world.frames[0].id, h);
+      A.ready = true;
+      updatePast();
+      layoutChanged();
       if (h.card) openCard(h.card.layer, h.card.id, {});
       bootBox.hidden = true;
       map.start();
@@ -1780,7 +1887,7 @@
       get lastDraw() { return A.lastDraw; },
       /** Nothing loading, nothing waiting to draw. */
       idle() { return A.ready && A.pending === 0 && !A.marksTimer && !A.flight && map.idle(); },
-      openCard: (layer, id) => openCard(layer, id, {}),
+      openCard: (layer, id, at) => openCard(layer, id, { at: at || null }),
       closeCard,
       setFrame: id => setFrame(id, null),
       setT: t => setT(t, false),
@@ -1794,7 +1901,8 @@
 
   Object.assign(MV, {
     parseHash, buildHash, inZoom, zoomHint, viewBox, marksURL, changedLayers, rowsForFrame, emptyReason, tilesShown,
-    isStale, tickAt, fmtAge, fmtDayAt, fmtSourceTime, keyGroups, seenFromAnswers, findBpp, baseShown, fmtCount,
+    isStale, tickAt, fmtAge, fmtDayAt, fmtSourceTime, sentence, fmtStatus, layerCount, keyGroups, seenFromAnswers, findBpp,
+    baseShown, fmtCount,
   });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 
