@@ -217,6 +217,83 @@ test('drawMarks draws every kind, reports the legend entries drawn and places la
   assert.ok(far.texts.includes('Center 5'));
 });
 
+test('a train line runs right of the way it goes, clear of the track it follows', () => {
+  // Track drawn from (-50, 0) east; a line the same way sits below it (right of an eastward run,
+  // y down), one the other way above it, and both clear of the track's drawn half width.
+  const map = { view: { cx: 0, cz: 0, bpp: 0.5, w: 400, h: 300 }, copies: () => [0] };
+  const lines = { id: 'industry.lines', style: { color: '#2a9d8f', line: 'flow', width: 3 }, legend: [] };
+  const list = [{ desc: lines, data: { marks: [
+    { k: 'path', id: 'east', p: [[-50, 0], [50, 0]], w: 3 },
+    { k: 'path', id: 'west', p: [[50, 0], [-50, 0]], w: 3 },
+  ] } }];
+  const out = MV.drawMarks(recordingCtx(), map, list, {});
+  const y = id => out.targets.find(t => t.id === id).pts[1] - 150;
+  const clear = MV.railHalf(0.5) + 1.5;
+  assert.ok(y('east') > clear, `east line at ${y('east')}`);
+  assert.ok(y('west') < -clear, `west line at ${y('west')}`);
+  assert.equal(MV.flowOffset(0.5, 3), MV.railHalf(0.5) + 1.5 + 2);
+});
+
+test('simplifyFlat drops crowded points and keeps both ends', () => {
+  assert.deepEqual(MV.simplifyFlat([0, 0, 0.5, 0, 1, 0, 3, 0, 3.2, 0], 1.5), [0, 0, 3.2, 0]);
+  assert.deepEqual(MV.simplifyFlat([0, 0, 2, 0, 4, 0, 6, 0], 1.5), [0, 0, 2, 0, 4, 0, 6, 0]);
+  assert.deepEqual(MV.simplifyFlat([0, 0, 9, 9], 50), [0, 0, 9, 9]);
+});
+
+test('boxGrid finds overlaps and forgets boxes off screen', () => {
+  const g = MV.boxGrid(200, 100, 32);
+  g.add([10, 10, 40, 30]);
+  g.add([-50, 10, -5, 30]);          // off the left edge: not kept
+  assert.equal(g.size, 1);
+  assert.ok(g.hits([35, 25, 60, 50]));
+  assert.ok(!g.hits([41, 10, 80, 30]));
+  assert.ok(!g.hits([-40, 10, -10, 30]));
+});
+
+test('clearOf moves a circle the least way out of the others', () => {
+  assert.deepEqual(MV.clearOf([], 5, 5, 3), [5, 5]);
+  const [x, y] = MV.clearOf([[0, 0, 10]], 4, 0, 10);
+  assert.ok(Math.abs(x - 22) < 1e-9 && Math.abs(y) < 1e-9);
+  const at = MV.clearOf([[0, 0, 8], [40, 30, 8]], 6, 6, 8);
+  for (const [bx, by, br] of [[0, 0, 8], [40, 30, 8]]) assert.ok(Math.hypot(at[0] - bx, at[1] - by) >= 8 + br + 2 - 1e-6);
+});
+
+test('labels stay wholly on screen and off the symbols, and the draw counts what it showed', () => {
+  // A station hard against the right edge with a machine on its left: its name goes where it is
+  // wholly on screen and clear of the machine.
+  const map = { view: { cx: 0, cz: 0, bpp: 1, w: 300, h: 200 }, copies: () => [0] };
+  const stations = { id: 'rail.stations', style: { color: 'ink', glyph: 'station', size: 7, label_bpp: 24 }, legend: [], priority: 85 };
+  const machines = { id: 'industry.machines', style: { color: 'ink', glyph: 'circle', size: 6 }, legend: [] };
+  const ctx = recordingCtx();
+  let t = [0, 0];
+  const placed = [];
+  ctx.translate = (x, y) => { t = [x, y]; };
+  ctx.fillText = s => { placed.push({ s: String(s), x: t[0], y: t[1], align: ctx.textAlign }); };
+  const list = [
+    { desc: machines, data: { marks: [{ k: 'point', id: 'm', x: 120, z: 0 }, { k: 'point', id: 'far', x: 4000, z: 0 }] } },
+    { desc: stations, data: { marks: [{ k: 'point', id: 's', x: 140, z: 0, l: 'Edge town' }] } },
+  ];
+  const out = MV.drawMarks(ctx, map, list, { theme: null });
+  const at = placed.find(p => p.s === 'Edge town');
+  assert.ok(at, 'the name is placed');
+  const tw = 'Edge town'.length * 6;
+  const x0 = at.align === 'left' ? at.x : at.align === 'right' ? at.x - tw : at.x - tw / 2;
+  assert.ok(x0 >= 0 && x0 + tw <= 300 && at.y >= 7 && at.y <= 193, `name at ${x0}, ${at.y}`);
+  assert.ok(!(x0 < 274 && x0 + tw > 266 && at.y - 7 < 104 && at.y + 7 > 96), `name over the machine at ${x0}, ${at.y}`);
+  assert.equal(out.counts.get('industry.machines'), 1);   // the far one is not on screen
+  assert.equal(out.counts.get('rail.stations'), 1);
+  assert.equal(out.clusters, 0);
+  // Two count bubbles on one spot are pushed apart, and counted.
+  const groups = { id: 'industry.machines', style: { color: 'ink' }, legend: [] };
+  const two = MV.drawMarks(recordingCtx(), map, [{ desc: groups, data: { marks: [
+    { k: 'cluster', id: 'c1', x: 0, z: 0, n: 40 }, { k: 'cluster', id: 'c2', x: 1, z: 0, n: 7 },
+  ] } }], {});
+  assert.equal(two.clusters, 2);
+  assert.equal(two.counts.get('industry.machines'), 47);
+  const [a, b] = two.targets.filter(t => t.cluster);
+  assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > 12, 'bubbles apart');
+});
+
 test('drawSwatch draws every legend entry and layer without throwing', () => {
   const descs = [
     { kinds: ['path'], style: { color: '#2f6db5', line: 'rail', width: 2 }, legend: [{ label: 'n', color: '#2f6db5', line: 'rail' }] },
@@ -226,6 +303,7 @@ test('drawSwatch draws every legend entry and layer without throwing', () => {
     { kinds: ['area'], style: { color: '#2a7f7a' }, legend: [{ label: 'a', color: '#2a7f7a', st: 'dot' }] },
     { kinds: ['cell'], style: { color: '#888' } },
     { kinds: ['label'], style: { color: '#888' } },
+    { kinds: ['cluster'], style: { color: 'ink' }, legend: [{ label: 'c', color: 'ink', n: 5 }] },
   ];
   for (const d of descs) {
     MV.drawSwatch(recordingCtx(), d, null, 22, 14, { dark: true });

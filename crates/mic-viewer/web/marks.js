@@ -227,6 +227,20 @@
     }
   }
 
+  /** A flat polyline without the points closer than `minD` to the last one kept (its ends kept). */
+  function simplifyFlat(f, minD) {
+    if (f.length <= 4) return f;
+    const out = [f[0], f[1]];
+    const n = f.length;
+    for (let i = 2; i < n - 2; i += 2) {
+      if (Math.hypot(f[i] - out[out.length - 2], f[i + 1] - out[out.length - 1]) >= minD) out.push(f[i], f[i + 1]);
+    }
+    const lx = f[n - 2], ly = f[n - 1];
+    if (out.length > 2 && Math.hypot(lx - out[out.length - 2], ly - out[out.length - 1]) < minD) out.length -= 2;
+    out.push(lx, ly);
+    return out;
+  }
+
   /** A flat polyline moved `d` px to its left (as it runs), corners mitred within reason. */
   function offsetFlat(f, d) {
     const n = f.length / 2, out = new Array(f.length);
@@ -520,11 +534,55 @@
     ctx.fill();
   }
 
+  /** Half the width, in CSS px, of track as drawn at zoom `bpp` (two rails on sleepers close in). */
+  function railHalf(bpp, w) {
+    w = w || 2;
+    if (bpp <= RAIL_DETAIL) return Math.max(0.62 / bpp, 0.36 / bpp + Math.max(1.25, 0.13 / bpp) / 2 + 1);
+    return ((bpp < 2 ? Math.max(w, Math.min(5, w * 1.6)) : w) + 3) / 2;
+  }
+
+  /** How wide a line of style `style` and width `w` is drawn at `bpp`, its halo included. */
+  function drawnWidth(style, w, bpp) {
+    switch (style) {
+      case 'rail': return 2 * railHalf(bpp, w);
+      case 'belt': return clamp(0.8 / bpp, w + 1.5, 16) + 2;
+      case 'flow': return flowWidth(w) + 3;
+      default: return w + 2.5;
+    }
+  }
+
+  /** A goods flow's drawn width: the mark's own, never thinner than 2 px. */
+  const flowWidth = w => Math.max(2, w || 2);
+
+  /**
+   * How far, in CSS px, a goods flow of width `w` is drawn to the right of the track it follows at
+   * `bpp`: clear of the track's casing, so the two directions between a pair of stations part.
+   */
+  function flowOffset(bpp, w) {
+    return railHalf(bpp) + flowWidth(w) / 2 + 2;
+  }
+
+  /** The halo as an opaque colour (the gap in a selection's casing must hide what is under it). */
+  const solidHalo = th => rgba(th.halo, 1);
+
+  /**
+   * The casing that marks a selected (`h` 2) or hovered (`h` 1) line under it: an ink band round
+   * the line's drawn width `dw`, parted from the line by a halo. The path must be built.
+   */
+  function casing(ctx, dw, h, th) {
+    ctx.lineWidth = dw + (h > 1 ? 9 : 6);
+    ctx.strokeStyle = h > 1 ? th.ink : rgba(th.ink, 0.55);
+    ctx.stroke();
+    ctx.lineWidth = dw + (h > 1 ? 4.5 : 3);
+    ctx.strokeStyle = solidHalo(th);
+    ctx.stroke();
+  }
+
   /**
    * Strokes the flat screen polyline `f` in line style `o.line` (`rail`, `chain`, `belt`, `flow`,
    * `dash`, `dot`, or plain) of colour `o.color` and width `o.w`, at zoom `o.bpp`, with arrows
-   * (`o.arrow`) and `o.n` things spread along it; `o.hi` 1 (hovered) or 2 (selected) underlays a
-   * highlight.
+   * (`o.arrow`) and `o.n` things spread along it; `o.hi` 1 (hovered) or 2 (selected) puts a casing
+   * under it.
    */
   function strokeLine(ctx, f, o) {
     const th = themeOf(o.theme);
@@ -536,11 +594,10 @@
     ctx.lineCap = 'round';
     ctx.setLineDash([]);
     const style = o.line || '';
+    if (style === 'flow') w = flowWidth(w);
     if (o.hi) {
       trace(ctx, f);
-      ctx.lineWidth = w + (style === 'belt' ? 12 : 9);
-      ctx.strokeStyle = rgba(th.ink, o.hi > 1 ? 0.38 : 0.22);
-      ctx.stroke();
+      casing(ctx, drawnWidth(style, w, bpp), o.hi, th);
     }
     switch (style) {
       case 'rail': {
@@ -632,9 +689,13 @@
         break;
       }
       case 'flow': {
+        // Goods on the move: solid colour on a halo (drawn beside the track by the caller).
         trace(ctx, f);
+        ctx.lineWidth = w + 3;
+        ctx.strokeStyle = th.halo;
+        ctx.stroke();
         ctx.lineWidth = w;
-        ctx.strokeStyle = rgba(c, o.hi ? 0.6 : 0.4);
+        ctx.strokeStyle = c;
         ctx.stroke();
         break;
       }
@@ -665,8 +726,8 @@
     }
     if (o.arrow && style !== 'belt') {
       const len = flatLength(f);
-      const step = style === 'flow' ? 110 : 80;
-      const s = Math.max(4, Math.min(9, w * (style === 'flow' ? 0.7 : 1.8)));
+      const step = style === 'flow' ? 120 : 80;
+      const s = style === 'flow' ? clamp(w * 1.1 + 3, 5, 10) : Math.max(4, Math.min(9, w * 1.8));
       walk(f, step, Math.min(step / 2, len / 2), (x, y, ux, uy) => arrowHead(ctx, x, y, ux, uy, s, c, th.halo));
     }
     if (o.n > 0) {
@@ -809,12 +870,17 @@
     }
   }
 
+  /** How far past its radius a glyph `g` reaches (a star's points, a signal's lamp, a station). */
+  const GLYPH_REACH = { station: 1.4, signal: 2.25, star: 1.3, diamond: 1.25, triangle: 1.2, cross: 1.05 };
+
   /**
    * Draws `list` (`[{ desc, data }]`, `data` a layer of `/api/marks`, bottom first) on `ctx` (CSS px)
    * for `map` at game time `opts.t` in theme `opts.theme` (app.js's: `ink`, `paper`, `halo`, ...).
    * `opts.selected` / `opts.hovered`: `{ layer, id }` drawn highlighted. Returns `{ targets, drawn,
-   * tracks, seen }`: what `pick` hit-tests, the marks drawn, the screen segments of leg tracks (for
-   * checks), and per layer id the legend entries drawn (a Set of indices, -1 for the layer style).
+   * tracks, seen, counts, clusters }`: what `pick` hit-tests, the marks drawn, the screen segments of
+   * leg tracks (for checks), per layer id the legend entries drawn (a Set of indices, -1 for the
+   * layer style), per layer id how many of its things are on screen (a cluster's count included),
+   * and how many cluster bubbles were drawn.
    */
   function drawMarks(ctx, map, list, opts) {
     opts = opts || {};
@@ -825,13 +891,18 @@
     const t = opts.t || 0;
     const sel = opts.selected, hov = opts.hovered;
     const targets = [], tracks = [], labels = [];
-    const seen = new Map();
-    let drawn = 0;
+    const seen = new Map(), counts = new Map();
+    let drawn = 0, clusters = 0;
     const X = x => (x - left) / bpp, Y = z => (z - top) / bpp;
     const margin = 64;
     const visible = (x0, y0, x1, y1) => x1 >= -margin && x0 <= W + margin && y1 >= -margin && y0 <= H + margin;
+    const onScreen = (x0, y0, x1, y1) => x1 >= 0 && x0 <= W && y1 >= 0 && y0 <= H;
     const halos = [];
     const gscale = glyphScale(bpp);
+    // The screen boxes of the symbols drawn: no label is put over one.
+    const glyphs = boxGrid(W, H, 48);
+    // Cluster bubbles placed so far (all layers): a new one is moved clear of them.
+    const bubbles = [];
 
     let order = 0;
     for (const { desc, data } of list) {
@@ -842,6 +913,13 @@
       const pri = desc.priority || 0;
       const lg = desc.legend || [];
       const showLabels = style.label_bpp != null && bpp <= style.label_bpp;
+      let inView = 0, counted = false;
+      // Counts a mark once (whichever copy is on screen first), `n` things for a cluster.
+      const tally = (x0, y0, x1, y1, n) => {
+        if (counted || !onScreen(x0, y0, x1, y1)) return;
+        counted = true;
+        inView += n || 1;
+      };
       let s = seen.get(lid);
       const note = (m, extra) => {
         if (!s) seen.set(lid, (s = new Set()));
@@ -866,6 +944,7 @@
       for (const m of data.marks) {
         const [ex0, ex1] = xExtent(m);
         const offs = map.copies((ex0 + ex1) / 2, (ex1 - ex0) / 2 + margin * bpp);
+        counted = m.k === 'cell';
         for (const off of offs) {
           const o = off / bpp;
           order++;
@@ -883,10 +962,13 @@
                 ctx.strokeStyle = th.ink;
                 ctx.stroke();
               }
+              const reach = m.ring || m.st === 'bad' || m.st === 'warn' ? r + 5 : r * (GLYPH_REACH[g] || 1) + 1;
+              glyphs.add([x - reach, y - reach, x + reach, y + reach]);
               const h = hiOf(m);
               if (h) halos.push([x, y, g === 'station' ? r * 1.5 : r, h]);
               if (m.id != null && cards) targets.push({ kind: 'pt', layer: lid, id: String(m.id), label: m.l, x, y, r: g === 'station' ? r * 1.35 : r, order });
-              if (m.l && showLabels) labels.push({ kind: 'pt', x, y, r: g === 'station' ? r * 1.4 : r, text: m.l, pri });
+              if (m.l && showLabels) labels.push({ kind: 'pt', x, y, r: Math.max(reach - 1, g === 'station' ? r * 1.4 : r), text: m.l, pri });
+              tally(x, y, x, y);
               note(m);
               drawn++;
               break;
@@ -909,18 +991,21 @@
               if (!visible(x, y, x, y)) break;
               const r = Math.max(2.5, (style.size || 6) / 2 + 0.5);
               drawGlyph(ctx, glyphOf(m, desc), x, y, r, c, th);
+              glyphs.add([x - r - 1, y - r - 1, x + r + 1, y + r + 1]);
               const h = hiOf(m);
               if (h) halos.push([x, y, r, h]);
               if (m.id != null && cards) targets.push({ kind: 'pt', layer: lid, id: String(m.id), label: m.l, x, y, r, order });
               if (m.l && showLabels) labels.push({ kind: 'pt', x, y, r, text: m.l, pri });
+              tally(x, y, x, y);
               note(m);
               drawn++;
               break;
             }
-            case 'path': {
-              const pts = m.p || [];
+            case 'path':
+            case 'edge': {
+              const pts = m.k === 'edge' ? (m.a && m.b ? [m.a, m.b] : []) : m.p || [];
               if (pts.length < 2) break;
-              const f = new Array(pts.length * 2);
+              let f = new Array(pts.length * 2);
               let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
               for (let i = 0; i < pts.length; i++) {
                 const x = X(pts[i][0]) + o, y = Y(pts[i][1]);
@@ -932,23 +1017,25 @@
                 if (y > y1) y1 = y;
               }
               if (!visible(x0, y0, x1, y1)) break;
-              const w = m.w || style.width || 2;
-              const line = lineOf(m, desc);
-              strokeLine(ctx, f, { line, color: colorOf(m, desc), w, bpp, theme: th, arrow: m.arrow, n: m.n, hi: hiOf(m) });
+              let w = m.w || style.width || 2;
+              const line = m.k === 'edge' ? style.line || null : lineOf(m, desc);
+              if (line === 'flow') {
+                // A goods flow runs beside the track it follows, on its right as it goes (first point
+                // to last), so the two directions between a pair of stations show apart.
+                w = flowWidth(w);
+                f = simplifyFlat(f, 1.5);
+                if (f.length >= 4) f = offsetFlat(f, -flowOffset(bpp, w));
+              }
+              const arrow = m.arrow != null ? !!m.arrow : line === 'flow';
+              strokeLine(ctx, f, { line, color: colorOf(m, desc), w, bpp, theme: th, arrow, n: m.n, hi: hiOf(m) });
               const tw = line === 'belt' ? clamp(0.8 / bpp, w + 1.5, 16) : w;
-              if (m.id != null && cards) targets.push({ kind: 'poly', layer: lid, id: String(m.id), label: m.l, pts: f, w: Math.max(tw, 4), order });
-              if (m.l && showLabels) labels.push(lineLabel(f, m.l, pri, w));
+              if (m.id != null && cards) {
+                if (m.k === 'edge') targets.push({ kind: 'seg', layer: lid, id: String(m.id), label: m.l, ax: f[0], ay: f[1], bx: f[f.length - 2], by: f[f.length - 1], w: Math.max(tw, 4), order });
+                else targets.push({ kind: 'poly', layer: lid, id: String(m.id), label: m.l, pts: f, w: Math.max(tw, 4), order });
+              }
+              if (m.l && showLabels) labels.push(lineLabel(f, m.l, pri, tw));
+              tally(x0, y0, x1, y1);
               note(m, m.n > 0 ? 'dot' : null);
-              drawn++;
-              break;
-            }
-            case 'edge': {
-              const ax = X(m.a[0]) + o, ay = Y(m.a[1]), bx = X(m.b[0]) + o, by = Y(m.b[1]);
-              if (!visible(Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by))) break;
-              const w = m.w || style.width || 2;
-              strokeLine(ctx, [ax, ay, bx, by], { line: style.line, color: colorOf(m, desc), w, bpp, theme: th, hi: hiOf(m) });
-              if (m.id != null && cards) targets.push({ kind: 'seg', layer: lid, id: String(m.id), label: m.l, ax, ay, bx, by, w, order });
-              note(m);
               drawn++;
               break;
             }
@@ -976,19 +1063,29 @@
                 r = 7;
                 if (h) halos.push([front[0], front[1], r, h]);
                 drawChevron(ctx, front[0], front[1], ux, uy, r, c, th, m.st);
+                glyphs.add([front[0] - r - 1.5, front[1] - r - 1.5, front[0] + r + 1.5, front[1] + r + 1.5]);
                 if (m.id != null && cards) targets.push({ kind: 'pt', layer: lid, id: String(m.id), label: m.l, x: front[0], y: front[1], r, order });
               } else {
                 r = hw;
+                // The carriages from nose to tail, for the casing round a selected train.
+                const back = cars[cars.length - 1];
+                let bx = back[2] - back[0], by = back[3] - back[1];
+                const bl = Math.hypot(bx, by);
+                if (bl > 1e-6) { bx /= bl; by /= bl; } else { bx = -ux; by = -uy; }
+                const body = [front[0] + ux * ext, front[1] + uy * ext].concat(flat, [back[2] + bx * ext, back[3] + by * ext]);
                 if (h) {
-                  trace(ctx, [front[0] + ux * ext, front[1] + uy * ext].concat(flat));
+                  trace(ctx, body);
                   ctx.lineCap = 'round';
-                  ctx.lineWidth = 2 * hw + 9;
-                  ctx.strokeStyle = rgba(th.ink, h > 1 ? 0.38 : 0.22);
-                  ctx.stroke();
+                  ctx.lineJoin = 'round';
+                  casing(ctx, 2 * hw + 2.5, h, th);
                 }
                 drawTrainShape(ctx, cars, c, th, m.st, h, hw, ext);
+                // Its boxes for the labels: a box every carriage width along it.
+                walk(body, Math.max(2, hw * 1.5), 0, (x, y) => glyphs.add([x - hw - 1, y - hw - 1, x + hw + 1, y + hw + 1]), 400);
+                glyphs.add([body[0] - hw - 1, body[1] - hw - 1, body[0] + hw + 1, body[1] + hw + 1]);
                 if (m.id != null && cards) targets.push({ kind: 'train', layer: lid, id: String(m.id), label: m.l, pts: flat, w: 2 * hw, x: front[0], y: front[1], order });
               }
+              tally(x0, y0, x1, y1);
               // Ahead of the train first, so the name never covers its carriages.
               const ahead = Math.abs(ux) >= Math.abs(uy) ? (ux > 0 ? 0 : 1) : (uy > 0 ? 2 : 3);
               if (m.l && showLabels) labels.push({ kind: 'pt', x: front[0] + ux * ext, y: front[1] + uy * ext, r: r + 2, text: m.l, pri: pri + 1, prefer: ahead });
@@ -1004,6 +1101,8 @@
                 ctx.fillStyle = rgba(ol.color, h ? fillA * 2.2 : fillA);
                 ctx.fill('evenodd');
                 ctx.lineJoin = 'miter';
+                // A selected or hovered area: a casing under its outline.
+                if (h) casing(ctx, ol.w + 3.75, h, th);
                 ctx.lineWidth = (h ? ol.w + 1.25 : ol.w) + 2.5;
                 ctx.strokeStyle = th.halo;
                 ctx.stroke();
@@ -1037,6 +1136,7 @@
                 edge(0.06);
                 if (m.id != null && cards) targets.push({ kind: 'rings', layer: lid, id: String(m.id), label: m.l, rings, x0, y0, x1, y1, area: Math.abs(area / 2), order });
                 if (m.l && x1 - x0 > 50) labels.push(areaLabel(rings, x0, y0, x1, y1, m.l, c, pri, th));
+                tally(x0, y0, x1, y1);
               } else if (m.box) {
                 let x0 = X(m.box[0]) + o, y0 = Y(m.box[1]), x1 = X(m.box[2]) + o, y1 = Y(m.box[3]);
                 if (!visible(x0, y0, x1, y1)) break;
@@ -1047,6 +1147,7 @@
                 edge(0.06);
                 if (m.id != null && cards) targets.push({ kind: 'box', layer: lid, id: String(m.id), label: m.l, x0, y0, x1, y1, order });
                 if (m.l && x1 - x0 > 50) labels.push({ kind: 'area', x: (x0 + x1) / 2, y: (y0 + y1) / 2, text: m.l, color: mix(c, th.ink, 0.45), pri });
+                tally(x0, y0, x1, y1);
               } else {
                 const x = X(m.x) + o, y = Y(m.z), r = Math.max(1.5, (m.r || 0) / bpp);
                 if (!visible(x - r, y - r, x + r, y + r)) break;
@@ -1055,6 +1156,7 @@
                 edge(0.07);
                 if (m.id != null && cards) targets.push({ kind: 'disc', layer: lid, id: String(m.id), label: m.l, x, y, r, order });
                 if (m.l && r > 30) labels.push({ kind: 'area', x, y, text: m.l, color: mix(c, th.ink, 0.45), pri });
+                tally(x - r, y - r, x + r, y + r);
               }
               note(m);
               drawn++;
@@ -1086,9 +1188,15 @@
               break;
             }
             case 'cluster': {
-              const x = X(m.x) + o, y = Y(m.z);
-              if (!visible(x, y, x, y)) break;
+              const x0 = X(m.x) + o, y0 = Y(m.z);
+              if (!visible(x0, y0, x0, y0)) break;
               const r = clamp(9 + 3.4 * Math.log10(Math.max(1, m.n)), 10, 22);
+              // Moved clear of the bubbles already drawn, so no count hides another.
+              const [x, y] = clearOf(bubbles, x0, y0, r);
+              bubbles.push([x, y, r]);
+              glyphs.add([x - r - 1, y - r - 1, x + r + 1, y + r + 1]);
+              tally(x0, y0, x0, y0, m.n);
+              clusters++;
               ctx.beginPath();
               ctx.arc(x, y, r, 0, TAU);
               ctx.fillStyle = th.paper;
@@ -1132,6 +1240,7 @@
               const x = X(m.x) + o, y = Y(m.z);
               if (!visible(x, y, x, y)) break;
               labels.push({ kind: 'text', x, y, text: m.text, pri: pri + 1000 });
+              tally(x, y, x, y);
               drawn++;
               break;
             }
@@ -1140,6 +1249,7 @@
           }
         }
       }
+      counts.set(lid, inView);
     }
 
     // Highlights of the selected and hovered things, over every mark.
@@ -1154,8 +1264,63 @@
       ctx.stroke();
     }
 
-    placeLabels(ctx, labels, W, H, th);
-    return { targets, drawn, tracks, seen };
+    placeLabels(ctx, labels, W, H, th, glyphs);
+    return { targets, drawn, tracks, seen, counts, clusters };
+  }
+
+  /** (x, y) moved the least way that keeps a circle of radius `r` there clear of `placed`
+   *  (`[x, y, r]` each), a few rounds at most. */
+  function clearOf(placed, x, y, r) {
+    for (let round = 0; round < 6; round++) {
+      let moved = false;
+      for (const [bx, by, br] of placed) {
+        const need = r + br + 2;
+        let dx = x - bx, dy = y - by;
+        const d = Math.hypot(dx, dy);
+        if (d >= need) continue;
+        if (d < 0.01) { dx = 1; dy = 0.35; }
+        const l = Math.hypot(dx, dy);
+        x = bx + (dx / l) * need;
+        y = by + (dy / l) * need;
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    return [x, y];
+  }
+
+  /**
+   * Screen boxes `[x0, y0, x1, y1]` in a grid of `cell` px over a `W` x `H` screen, for asking
+   * whether a box meets any of them. Boxes wholly off screen are not kept.
+   */
+  function boxGrid(W, H, cell) {
+    const nx = Math.max(1, Math.ceil(W / cell)), ny = Math.max(1, Math.ceil(H / cell));
+    const cells = new Array(nx * ny);
+    const ci = v => clamp(Math.floor(v / cell), 0, nx - 1), cj = v => clamp(Math.floor(v / cell), 0, ny - 1);
+    let size = 0;
+    return {
+      get size() { return size; },
+      add(b) {
+        if (b[2] < 0 || b[3] < 0 || b[0] > W || b[1] > H) return;
+        size++;
+        for (let j = cj(b[1]), j1 = cj(b[3]); j <= j1; j++) {
+          for (let i = ci(b[0]), i1 = ci(b[2]); i <= i1; i++) {
+            const k = j * nx + i;
+            (cells[k] || (cells[k] = [])).push(b);
+          }
+        }
+      },
+      hits(b) {
+        for (let j = cj(b[1]), j1 = cj(b[3]); j <= j1; j++) {
+          for (let i = ci(b[0]), i1 = ci(b[2]); i <= i1; i++) {
+            const list = cells[j * nx + i];
+            if (!list) continue;
+            for (const o of list) if (b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]) return true;
+          }
+        }
+        return false;
+      },
+    };
   }
 
   /** A label along the longest piece of a path, kept upright. */
@@ -1189,17 +1354,19 @@
     return { kind: 'area', x, y, text, color: mix(c, th.ink, 0.45), pri };
   }
 
-  /**
-   * Draws labels on top without overlaps, higher priority first: a point's beside it (right, left,
-   * below, above, the first that is free), an area's in italics at its middle, a path's along it.
-   */
   /** How far apart, in CSS px, two labels with the same text must be for both to show. */
   const REPEAT_PX = 160;
 
-  function placeLabels(ctx, labels, W, H, th) {
+  /**
+   * Draws labels on top without overlaps, higher priority first: a point's beside it (right, left,
+   * below, above, then the corners, the first that is free), an area's in italics at its middle, a
+   * path's along it. A label goes only where it is wholly on screen and covers no other label and
+   * none of the symbols in `glyphs` (a `boxGrid`).
+   */
+  function placeLabels(ctx, labels, W, H, th, glyphs) {
     labels.sort((a, b) => b.pri - a.pri);
-    const boxes = [];
-    const free = b => b[2] >= 0 && b[0] <= W && b[3] >= 0 && b[1] <= H && !boxes.some(o => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+    const boxes = boxGrid(W, H, 64);
+    const free = b => b[0] >= 0 && b[2] <= W && b[1] >= 0 && b[3] <= H && !boxes.hits(b) && !(glyphs && glyphs.hits(b));
     ctx.lineJoin = 'round';
     ctx.textBaseline = 'middle';
     let n = 0;
@@ -1216,9 +1383,11 @@
       const tw = ctx.measureText(text).width, th2 = 14;
       let at = null;
       if (L.kind === 'pt') {
-        const g = L.r + 4;
+        const g = L.r + 4, d = g * 0.75;
         const cands = [
           [L.x + g, L.y, 'left'], [L.x - g, L.y, 'right'], [L.x, L.y + g + th2 / 2, 'center'], [L.x, L.y - g - th2 / 2, 'center'],
+          [L.x + d, L.y - d - th2 / 2, 'left'], [L.x + d, L.y + d + th2 / 2, 'left'],
+          [L.x - d, L.y - d - th2 / 2, 'right'], [L.x - d, L.y + d + th2 / 2, 'right'],
         ];
         // `prefer`: the side tried first (0 right, 1 left, 2 below, 3 above).
         if (L.prefer > 0) cands.unshift(cands.splice(L.prefer, 1)[0]);
@@ -1235,15 +1404,16 @@
         const b = [x - hw, y - hh, x + hw, y + hh];
         if (free(b)) at = { x, y, align: 'center', b, a: L.a };
       } else {
-        // An area's name may move up or down a line to let a point's label be.
-        for (const dy of L.kind === 'area' ? [0, -18, 18] : [0]) {
+        // An area's name (or a placed name) may move up or down a line or two to let a symbol or a
+        // point's label be.
+        for (const dy of [0, -18, 18, -34, 34]) {
           const y = L.y + dy;
           const b = [L.x - tw / 2 - 3, y - th2 / 2 - 1, L.x + tw / 2 + 3, y + th2 / 2 + 1];
           if (free(b)) { at = { x: L.x, y, align: 'center', b }; break; }
         }
       }
       if (!at) continue;
-      boxes.push(at.b);
+      boxes.add(at.b);
       if (!said.has(text)) said.set(text, []);
       said.get(text).push([L.x, L.y]);
       n++;
@@ -1285,9 +1455,28 @@
       drawTrainShape(ctx, [[x0 - 1, cy, x0 - L * 0.45, cy], [x0 - L * 0.55 - 1, cy, x0 - L + 1, cy]], color, th, st, 0, Math.min(3.5, h / 3), 1);
       return;
     }
+    if (kind === 'cluster') {
+      // A count bubble: paper inside a ring, a number in it.
+      const r = Math.min(h / 2, 7.5), x = w / 2;
+      ctx.beginPath();
+      ctx.arc(x, cy, r, 0, TAU);
+      ctx.fillStyle = th.paper;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, cy, r - 1, 0, TAU);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = color;
+      ctx.stroke();
+      ctx.font = `700 ${Math.round(r * 1.05)}px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = th.ink;
+      ctx.fillText(String((e && e.n) || style.n || 12), x, cy + 0.5);
+      return;
+    }
     if (line || (!glyph && (kind === 'path' || kind === 'edge' || kind === 'leg'))) {
       const f = line === 'rail' || line === 'chain' ? [2, cy + 2.5, w / 2, cy - 2.5, w - 2, cy + 1.5] : [2, cy, w - 2, cy];
-      const lw = line === 'flow' ? h * 0.6 : Math.min(style.width || 2, 3);
+      const lw = line === 'flow' ? 3 : Math.min(style.width || 2, 3);
       strokeLine(ctx, f, { line, color, w: lw, bpp: line === 'belt' ? 0.5 : 4, theme: th, arrow: line === 'belt' || line === 'flow' });
       return;
     }
@@ -1332,8 +1521,9 @@
 
   Object.assign(MV, {
     legAt, parseColor, rgba, lighten, mix, colorOf, glyphOf, lineOf, legendOf, RAMPS, rampColor, compact,
-    distToSegment, distToFlat, inRings, offsetFlat, walk, flatLength, pick, glyphPath, drawGlyph, drawMarks,
-    drawSwatch, strokeLine, xExtent, themeOf, resolve, THEMES: { light: LIGHT, dark: DARK },
+    distToSegment, distToFlat, inRings, offsetFlat, simplifyFlat, walk, flatLength, pick, glyphPath, drawGlyph,
+    drawMarks, drawSwatch, strokeLine, xExtent, themeOf, resolve, railHalf, flowOffset, clearOf, boxGrid,
+    THEMES: { light: LIGHT, dark: DARK },
   });
   if (typeof module === 'object' && module.exports) module.exports = MV;
 })();
