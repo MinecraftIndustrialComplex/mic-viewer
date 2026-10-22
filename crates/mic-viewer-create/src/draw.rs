@@ -598,11 +598,24 @@ pub fn rail_card(rail: &Rail, layer: &str, id: &str) -> Option<Card> {
             }
             let mut calling = Section::new("Trains whose schedule calls here");
             for t in &rail.trains {
-                if t.schedule.iter().any(|st| st.kind == "destination" && matches_station(&st.text, &s.name)) {
-                    let next = t.destination == Some(s.id);
-                    let v = if next { "next stop" } else { "on its schedule" };
-                    calling.fields.push(mic_viewer::api::Field::new(&t.name, v).link(TRAINS, uuid_text(&t.id)));
+                let stops = t.schedule.iter().filter(|st| st.kind == "destination").count();
+                let Some((k, st)) = t
+                    .schedule
+                    .iter()
+                    .filter(|st| st.kind == "destination")
+                    .enumerate()
+                    .find(|(_, st)| matches_station(&st.text, &s.name))
+                else {
+                    continue;
+                };
+                let mut v = if stops == 1 { "its only stop".to_owned() } else { format!("stop {} of {stops}", k + 1) };
+                if let Some(w) = st.until.first() {
+                    v.push_str(&format!(", {w}"));
                 }
+                if t.destination == Some(s.id) {
+                    v.push_str(", bound here now");
+                }
+                calling.fields.push(mic_viewer::api::Field::new(&t.name, v).link(TRAINS, uuid_text(&t.id)));
             }
             if !calling.fields.is_empty() {
                 c = c.section(calling);
@@ -642,7 +655,7 @@ pub fn rail_card(rail: &Rail, layer: &str, id: &str) -> Option<Card> {
                 for (k, st) in t.schedule.iter().enumerate() {
                     let mut v = st.describe();
                     if !st.until.is_empty() {
-                        v.push_str(&format!(", then {}", st.until.join(" or ")));
+                        v.push_str(&format!(", then {}", st.until.join(", or ")));
                     }
                     let label = if k == t.current { format!("{} (now)", k + 1) } else { format!("{}", k + 1) };
                     sec.fields.push(mic_viewer::api::Field::new(&label, v));

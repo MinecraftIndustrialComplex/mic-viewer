@@ -911,35 +911,71 @@ fn read_stop(e: &Tag) -> Stop {
     let text = data
         .and_then(|d| s(d, "Text").map(str::to_owned).or_else(|| i(d, "Value").map(|v| v.to_string())))
         .unwrap_or_default();
-    let mut until = Vec::new();
-    for alt in e.get("Conditions").map(Tag::items).unwrap_or_default() {
-        let parts: Vec<String> = alt.items().iter().map(describe_condition).collect();
-        if !parts.is_empty() {
-            until.push(parts.join(" and "));
-        }
-    }
+    let until = e
+        .get("Conditions")
+        .map(Tag::items)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|alt| describe_wait(alt.items()))
+        .collect();
     Stop { kind, text, until }
 }
 
+/// One way a stop ends, as a phrase that follows "then": "wait 10 s", "wait 5 s and for redstone".
+/// Every condition in the group must hold, so several delays are one wait, the longest.
+fn describe_wait(conditions: &[Tag]) -> Option<String> {
+    let mut longest: Option<(i64, String)> = None;
+    let mut rest = Vec::new();
+    for c in conditions {
+        let id = s(c, "Id").unwrap_or("?");
+        let id = id.rsplit(':').next().unwrap_or(id);
+        if id == "delay" {
+            let d = c.get("Data");
+            let (ticks, text) = duration(d.and_then(|d| i(d, "Value")).unwrap_or(0), d.and_then(|d| i(d, "TimeUnit")));
+            if longest.as_ref().is_none_or(|(t, _)| ticks > *t) {
+                longest = Some((ticks, text));
+            }
+        } else {
+            rest.push(describe_condition(c));
+        }
+    }
+    let mut parts: Vec<String> = longest.map(|(_, t)| t).into_iter().collect();
+    parts.extend(rest);
+    (!parts.is_empty()).then(|| format!("wait {}", parts.join(" and ")))
+}
+
+/// A saved duration as ticks (to compare) and text ("10 s"); Create's units are ticks, seconds
+/// and minutes in that order.
+fn duration(value: i64, unit: Option<i64>) -> (i64, String) {
+    match unit.unwrap_or(1) {
+        0 => (value, format!("{value} ticks")),
+        2 => (value * 1200, format!("{value} min")),
+        _ => (value * 20, format!("{value} s")),
+    }
+}
+
+/// A condition other than a delay, as what the train waits for: "for redstone", "for 2 players".
 fn describe_condition(c: &Tag) -> String {
     let id = s(c, "Id").unwrap_or("?");
     let id = id.rsplit(':').next().unwrap_or(id);
     let d = c.get("Data");
     let value = d.and_then(|d| i(d, "Value"));
     match id {
-        "delay" | "idle" => {
-            let unit = match d.and_then(|d| i(d, "TimeUnit")).unwrap_or(1) {
-                0 => "ticks",
-                2 => "min",
-                _ => "s",
-            };
-            let what = if id == "delay" { "wait" } else { "idle" };
-            format!("{what} {} {unit}", value.unwrap_or(0))
+        "idle" => {
+            let (_, t) = duration(value.unwrap_or(0), d.and_then(|d| i(d, "TimeUnit")));
+            format!("for the cargo to sit still {t}")
         }
-        "time_of_day" => "time of day".into(),
-        "powered" => "redstone".into(),
-        "player_count" => format!("{} players", value.unwrap_or(0)),
-        k => tags::humanize(k).to_lowercase(),
+        "time_of_day" => "for a time of day".into(),
+        "powered" => "for redstone".into(),
+        "redstone_link" => "for a redstone link".into(),
+        "player_count" => match value.unwrap_or(0) {
+            1 => "for a player aboard".into(),
+            n => format!("for {n} players aboard"),
+        },
+        "item_threshold" => "for an amount of items".into(),
+        "fluid_threshold" => "for an amount of fluid".into(),
+        "unloaded" => "for the station's chunk to unload".into(),
+        k => format!("for {}", tags::humanize(k).to_lowercase()),
     }
 }
 
@@ -949,6 +985,29 @@ mod tests {
 
     fn close(a: V3, b: V3) -> bool {
         len(sub(a, b)) < 1e-6
+    }
+
+    fn cond(id: &str, value: i32, unit: i32) -> Tag {
+        Tag::Compound(vec![
+            ("Id".into(), Tag::String(format!("create:{id}"))),
+            (
+                "Data".into(),
+                Tag::Compound(vec![("Value".into(), Tag::Int(value)), ("TimeUnit".into(), Tag::Int(unit))]),
+            ),
+        ])
+    }
+
+    #[test]
+    fn waits_read_as_one_phrase() {
+        // Every condition in a group must hold, so two delays are the longer one.
+        assert_eq!(describe_wait(&[cond("delay", 5, 1), cond("delay", 10, 1)]).unwrap(), "wait 10 s");
+        assert_eq!(describe_wait(&[cond("delay", 2, 2), cond("delay", 90, 1)]).unwrap(), "wait 2 min");
+        assert_eq!(
+            describe_wait(&[cond("powered", 0, 1), cond("delay", 20, 0)]).unwrap(),
+            "wait 20 ticks and for redstone"
+        );
+        assert_eq!(describe_wait(&[cond("idle", 5, 1)]).unwrap(), "wait for the cargo to sit still 5 s");
+        assert_eq!(describe_wait(&[]), None);
     }
 
     #[test]
