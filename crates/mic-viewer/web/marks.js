@@ -876,7 +876,8 @@
   /**
    * Draws `list` (`[{ desc, data }]`, `data` a layer of `/api/marks`, bottom first) on `ctx` (CSS px)
    * for `map` at game time `opts.t` in theme `opts.theme` (app.js's: `ink`, `paper`, `halo`, ...).
-   * `opts.selected` / `opts.hovered`: `{ layer, id }` drawn highlighted. Returns `{ targets, drawn,
+   * `opts.selected` / `opts.hovered`: `{ layer, id }` drawn highlighted. `opts.covered`: screen
+   * boxes `[x0, y0, x1, y1]` panels hide (the key, a card), where no label goes. Returns `{ targets, drawn,
    * tracks, seen, counts, clusters }`: what `pick` hit-tests, the marks drawn, the screen segments of
    * leg tracks (for checks), per layer id the legend entries drawn (a Set of indices, -1 for the
    * layer style), per layer id how many of its things are on screen (a cluster's count included),
@@ -901,6 +902,7 @@
     const gscale = glyphScale(bpp);
     // The screen boxes of the symbols drawn: no label is put over one.
     const glyphs = boxGrid(W, H, 48);
+    for (const b of opts.covered || []) glyphs.add(b);
     // Cluster bubbles placed so far (all layers): a new one is moved clear of them.
     const bubbles = [];
 
@@ -921,7 +923,9 @@
         inView += n || 1;
       };
       let s = seen.get(lid);
+      // The key lists what is on screen: a mark drawn only in the margin round it is not noted.
       const note = (m, extra) => {
+        if (!counted) return;
         if (!s) seen.set(lid, (s = new Set()));
         if (m.ci != null && lg[m.ci]) s.add(m.ci);
         else s.add(-1);
@@ -1195,8 +1199,8 @@
               const [x, y] = clearOf(bubbles, x0, y0, r);
               bubbles.push([x, y, r]);
               glyphs.add([x - r - 1, y - r - 1, x + r + 1, y + r + 1]);
-              tally(x0, y0, x0, y0, m.n);
-              clusters++;
+              tally(x - r, y - r, x + r, y + r, m.n);
+              if (onScreen(x - r, y - r, x + r, y + r)) clusters++;
               ctx.beginPath();
               ctx.arc(x, y, r, 0, TAU);
               ctx.fillStyle = th.paper;
@@ -1214,7 +1218,7 @@
                   ctx.strokeStyle = resolve((e && e.color) || style.color, th);
                   ctx.stroke();
                   a0 = a1;
-                  if (e) {
+                  if (e && counted) {
                     if (!s) seen.set(lid, (s = new Set()));
                     s.add(Number(k));
                   }
@@ -1224,8 +1228,10 @@
                 ctx.arc(x, y, r - 1.5, 0, TAU);
                 ctx.strokeStyle = resolve(style.color, th);
                 ctx.stroke();
-                if (!s) seen.set(lid, (s = new Set()));
-                s.add(-1);
+                if (counted) {
+                  if (!s) seen.set(lid, (s = new Set()));
+                  s.add(-1);
+                }
               }
               ctx.font = `600 ${r > 14 ? 12 : 11}px ${FONT}`;
               ctx.textAlign = 'center';

@@ -280,6 +280,10 @@ test('labels stay wholly on screen and off the symbols, and the draw counts what
   const x0 = at.align === 'left' ? at.x : at.align === 'right' ? at.x - tw : at.x - tw / 2;
   assert.ok(x0 >= 0 && x0 + tw <= 300 && at.y >= 7 && at.y <= 193, `name at ${x0}, ${at.y}`);
   assert.ok(!(x0 < 274 && x0 + tw > 266 && at.y - 7 < 104 && at.y + 7 > 96), `name over the machine at ${x0}, ${at.y}`);
+  // A panel over everything left of the station: no room for the name anywhere.
+  placed.length = 0;
+  MV.drawMarks(ctx, map, list, { covered: [[0, 0, 284, 200]] });
+  assert.ok(!placed.some(p => p.s === 'Edge town'), 'no name under a panel');
   assert.equal(out.counts.get('industry.machines'), 1);   // the far one is not on screen
   assert.equal(out.counts.get('rail.stations'), 1);
   assert.equal(out.clusters, 0);

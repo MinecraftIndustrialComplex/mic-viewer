@@ -521,9 +521,20 @@
       }
     }
 
+    /** The panels over the map (the key, a card), in canvas px, so no label is put under them. */
+    function covered() {
+      const c = canvas.getBoundingClientRect(), out = [];
+      for (const box of [keyBox, cardBox]) {
+        if (box.hidden) continue;
+        const r = box.getBoundingClientRect();
+        if (r.width && r.height) out.push([r.left - c.left - 2, r.top - c.top - 2, r.right - c.left + 2, r.bottom - c.top + 2]);
+      }
+      return out;
+    }
+
     function overlay(ctx) {
       if (!A.ready) return;
-      A.lastDraw = MV.drawMarks(ctx, map, drawList(), { t: drawT(), selected: A.selected, hovered: A.hovered, theme: A.theme });
+      A.lastDraw = MV.drawMarks(ctx, map, drawList(), { t: drawT(), selected: A.selected, hovered: A.hovered, theme: A.theme, covered: covered() });
       drawEvents(ctx);
       scheduleKey();
     }
