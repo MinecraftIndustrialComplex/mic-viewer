@@ -1152,6 +1152,8 @@
         box.appendChild(ul);
         keyBody.appendChild(box);
       }
+      // The key's size changed: draw again, so labels move out from under it.
+      map.invalidate();
     }
 
     // The key is a fixed width and scrolls inside past a height (viewer.css); its open or shut
@@ -1161,6 +1163,7 @@
       keyHead.setAttribute('aria-expanded', String(open));
       keyHead.title = open ? 'Hide the key' : 'Show the key';
       if (!quiet) store.set('key', open);
+      if (map) map.invalidate();
     }
     keyHead.addEventListener('click', () => setKeyOpen(keyBody.hidden));
 
@@ -1205,6 +1208,7 @@
         const keep = cardBody.scrollTop;
         MV.renderCard(cardBody, card, cardCtx);
         if (o.quiet) cardBody.scrollTop = keep;
+        map.invalidate();   // a phone's sheet has its height now: labels move out from under it
         // Flown to (a link, back): to the middle of the map the card leaves open. Picked on the
         // map: kept out from under the card once it has its height.
         if (o.go) flyShown(o.go[0], o.go[1], o.go[2]);
